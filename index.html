@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -22,404 +21,256 @@
     <div class="controls">
         <label>Size: <select id="size"><option value="64">64</option><option value="128" selected>128</option></select></label>
         <label>Seed: <input type="text" id="seed" placeholder="Random"></label>
+        <button onclick="randomSeed()">Random Seed</button>
         <button onclick="generate()">Generate</button>
         <button onclick="switchView()">Toggle View</button>
         <button onclick="downloadAll()">Download All</button>
         <span id="viewLabel">(Heightmap)</span>
     </div>
-
-```
-<div style="display: flex; gap: 20px;">
-    <div>
-        <h4>Cube Net</h4>
-        <div class="cube-grid">
-            <!-- Cross layout: top, left-front-right-back, bottom -->
-            <div></div><div class="face"><canvas id="top"></canvas></div><div></div><div></div>
-            <div class="face"><canvas id="left"></canvas></div><div class="face"><canvas id="front"></canvas></div><div class="face"><canvas id="right"></canvas></div><div class="face"><canvas id="back"></canvas></div>
-            <div></div><div class="face"><canvas id="bottom"></canvas></div><div></div><div></div>
+    
+    <div style="display: flex; gap: 20px;">
+        <div>
+            <h4>Cube Net</h4>
+            <div class="cube-grid">
+                <!-- Cross layout: top, left-front-right-back, bottom -->
+                <div></div><div class="face"><canvas id="top"></canvas></div><div></div><div></div>
+                <div class="face"><canvas id="left"></canvas></div><div class="face"><canvas id="front"></canvas></div><div class="face"><canvas id="right"></canvas></div><div class="face"><canvas id="back"></canvas></div>
+                <div></div><div class="face"><canvas id="bottom"></canvas></div><div></div><div></div>
+            </div>
         </div>
     </div>
-    
-    <div>
-        <h4>3D Preview</h4>
-        <canvas id="cube3d" width="400" height="400" style="border: 1px solid #999; cursor: grab;"></canvas>
-        <div style="font-size: 12px; margin-top: 5px;">Click and drag to rotate</div>
-    </div>
-</div>
 
-<script>
-    let currentView = 'heightmap';
-    let currentData = null;
-    let cube3D = null;
+    <script>
+        let currentView = 'heightmap';
+        let currentData = null;
 
-    // 3D Cube renderer
-    class Cube3D {
-        constructor(canvas) {
-            this.canvas = canvas;
-            this.ctx = canvas.getContext('2d');
-            this.rotX = 0.2;
-            this.rotY = 0.3;
-            this.isDragging = false;
-            this.lastMouseX = 0;
-            this.lastMouseY = 0;
-            this.textures = {};
+        class Noise {
+            constructor(seed) {
+                this.seed = this.hashSeed(seed || Math.random().toString());
+            }
             
-            this.setupEvents();
-        }
-        
-        setupEvents() {
-            this.canvas.addEventListener('mousedown', (e) => {
-                this.isDragging = true;
-                this.lastMouseX = e.clientX;
-                this.lastMouseY = e.clientY;
-                this.canvas.style.cursor = 'grabbing';
-            });
-            
-            this.canvas.addEventListener('mousemove', (e) => {
-                if (this.isDragging) {
-                    const deltaX = e.clientX - this.lastMouseX;
-                    const deltaY = e.clientY - this.lastMouseY;
-                    
-                    this.rotY += deltaX * 0.01;
-                    this.rotX += deltaY * 0.01;
-                    
-                    this.lastMouseX = e.clientX;
-                    this.lastMouseY = e.clientY;
-                    
-                    this.render();
+            hashSeed(s) {
+                let h = 0;
+                for (let i = 0; i < s.length; i++) {
+                    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
                 }
-            });
+                // Ensure seed has strong impact by using multiple hash iterations
+                h = h * 1013904223 + 1664525;
+                h = h * 1664525 + 1013904223;
+                return Math.abs(h) / 2147483648;
+            }
             
-            this.canvas.addEventListener('mouseup', () => {
-                this.isDragging = false;
-                this.canvas.style.cursor = 'grab';
-            });
+            hash(x, y, z) {
+                // Strong hash function that amplifies seed differences
+                let h = this.seed * 999999999 + x * 374761393 + y * 668265263 + z * 1274126177;
+                h = (h ^ (h >>> 13)) * 1274126177;
+                h = (h ^ (h >>> 16)) * 1974126343;
+                h = (h ^ (h >>> 7)) * 1374761393;
+                return (h ^ (h >>> 14)) / 4294967296 + 0.5;
+            }
             
-            this.canvas.addEventListener('mouseleave', () => {
-                this.isDragging = false;
-                this.canvas.style.cursor = 'grab';
-            });
+            smoothstep(t) { return t * t * (3 - 2 * t); }
+            
+            noise3D(x, y, z) {
+                const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+                const fx = x - ix, fy = y - iy, fz = z - iz;
+                const sx = this.smoothstep(fx), sy = this.smoothstep(fy), sz = this.smoothstep(fz);
+                
+                // Get hash values for cube corners
+                const c000 = this.hash(ix, iy, iz);
+                const c001 = this.hash(ix, iy, iz+1);
+                const c010 = this.hash(ix, iy+1, iz);
+                const c011 = this.hash(ix, iy+1, iz+1);
+                const c100 = this.hash(ix+1, iy, iz);
+                const c101 = this.hash(ix+1, iy, iz+1);
+                const c110 = this.hash(ix+1, iy+1, iz);
+                const c111 = this.hash(ix+1, iy+1, iz+1);
+                
+                // Trilinear interpolation
+                const c00 = c000*(1-sx) + c100*sx;
+                const c01 = c001*(1-sx) + c101*sx;
+                const c10 = c010*(1-sx) + c110*sx;
+                const c11 = c011*(1-sx) + c111*sx;
+                
+                const c0 = c00*(1-sy) + c10*sy;
+                const c1 = c01*(1-sy) + c11*sy;
+                
+                return c0*(1-sz) + c1*sz;
+            }
+            
+            fbm(x, y, z, octaves = 6) {
+                let value = 0, amp = 1, freq = 1, maxValue = 0;
+                for (let i = 0; i < octaves; i++) {
+                    value += this.noise3D(x * freq, y * freq, z * freq) * amp;
+                    maxValue += amp;
+                    amp *= 0.5;
+                    freq *= 2;
+                }
+                return value / maxValue;
+            }
         }
-        
-        updateTextures(data, view) {
-            Object.keys(data).forEach(face => {
+
+        function getCubeCoords(face, u, v) {
+            // Convert texture coordinates [0,1] to cube coordinates
+            // Using standard cube mapping with perfect edge continuity
+            const s = u * 2 - 1;  // [-1, 1]
+            const t = v * 2 - 1;  // [-1, 1]
+            
+            let x, y, z;
+            
+            // Standard OpenGL cube mapping convention for perfect edge alignment
+            switch(face) {
+                case 'front':  // +Z face
+                    x = s; y = -t; z = 1;
+                    break;
+                case 'back':   // -Z face  
+                    x = -s; y = -t; z = -1;
+                    break;
+                case 'right':  // +X face
+                    x = 1; y = -t; z = -s;
+                    break;
+                case 'left':   // -X face
+                    x = -1; y = -t; z = s;
+                    break;
+                case 'top':    // +Y face
+                    x = s; y = 1; z = t;
+                    break;
+                case 'bottom': // -Y face
+                    x = s; y = -1; z = -t;
+                    break;
+            }
+            
+            // Normalize to unit sphere for seamless noise sampling across edges
+            const len = Math.sqrt(x*x + y*y + z*z);
+            return { x: x/len, y: y/len, z: z/len };
+        }
+
+        function getBiome(height, temp, moisture) {
+            if (height < 0.3) return [30, 60, 130]; // Water
+            if (height < 0.35) return [220, 180, 140]; // Beach
+            
+            // Land biomes based on temperature and moisture
+            if (temp > 0.6) {
+                if (moisture < 0.3) return [200, 180, 120]; // Desert
+                if (moisture < 0.6) return [160, 180, 100]; // Savanna  
+                return [40, 100, 60]; // Tropical forest
+            } else if (temp > 0.3) {
+                if (moisture < 0.3) return [140, 200, 80]; // Grassland
+                if (moisture < 0.6) return [80, 120, 80]; // Temperate forest
+                return [20, 60, 20]; // Temperate rainforest
+            } else {
+                if (height > 0.8) return [240, 240, 250]; // Snow
+                if (moisture < 0.3) return [120, 140, 120]; // Tundra
+                return [60, 90, 40]; // Taiga
+            }
+        }
+
+        function generateFace(face, size, noise) {
+            const heightData = new Float32Array(size * size);
+            const biomeData = new Uint8ClampedArray(size * size * 4);
+            
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const u = x / (size - 1);
+                    const v = y / (size - 1);
+                    
+                    // Get 3D coordinates on cube surface - this ensures edge continuity
+                    // Adjacent faces will have identical coordinates at shared edges
+                    const coords = getCubeCoords(face, u, v);
+                    const idx = y * size + x;
+                    
+                    // Generate height using 3D noise on sphere coordinates
+                    const height = Math.max(0, Math.min(1, 
+                        noise.fbm(coords.x * 5, coords.y * 5, coords.z * 5, 6) * 0.7 + 0.2
+                    ));
+                    
+                    // Generate climate parameters with different frequencies
+                    const temp = noise.fbm(coords.x * 3 + 1000, coords.y * 3 + 1000, coords.z * 3 + 1000, 4);
+                    const moisture = noise.fbm(coords.x * 2.5 + 2000, coords.y * 2.5 + 2000, coords.z * 2.5 + 2000, 3);
+                    
+                    heightData[idx] = height;
+                    const biome = getBiome(height, temp, moisture);
+                    
+                    const biomeIdx = idx * 4;
+                    biomeData[biomeIdx] = biome[0];
+                    biomeData[biomeIdx + 1] = biome[1];
+                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx + 3] = 255;
+                }
+            }
+            
+            return { heightData, biomeData };
+        }
+
+        function render(canvas, heightData, biomeData, size, view) {
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(size, size);
+            const data = imageData.data;
+            
+            if (view === 'heightmap') {
+                for (let i = 0; i < heightData.length; i++) {
+                    const val = Math.floor(heightData[i] * 255);
+                    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = val;
+                    data[i * 4 + 3] = 255;
+                }
+            } else {
+                data.set(biomeData);
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function randomSeed() {
+            const seed = Math.random().toString(36).substr(2, 9);
+            document.getElementById('seed').value = seed;
+        }
+
+        function generate() {
+            const size = parseInt(document.getElementById('size').value);
+            const seedInput = document.getElementById('seed').value.trim();
+            const seed = seedInput || Math.random().toString(36).substr(2, 9);
+            
+            document.getElementById('seed').value = seed;
+            const noise = new Noise(seed);
+            
+            const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+            currentData = {};
+            
+            faces.forEach(face => {
                 const canvas = document.getElementById(face);
-                this.textures[face] = canvas;
-            });
-            this.render();
-        }
-        
-        project(x, y, z) {
-            // Simple perspective projection
-            const distance = 600;
-            const scale = distance / (distance + z);
-            return {
-                x: this.canvas.width/2 + x * scale,
-                y: this.canvas.height/2 + y * scale
-            };
-        }
-        
-        rotatePoint(x, y, z) {
-            // Rotate around Y axis
-            const cosY = Math.cos(this.rotY);
-            const sinY = Math.sin(this.rotY);
-            const x1 = x * cosY - z * sinY;
-            const z1 = x * sinY + z * cosY;
-            
-            // Rotate around X axis
-            const cosX = Math.cos(this.rotX);
-            const sinX = Math.sin(this.rotX);
-            const y1 = y * cosX - z1 * sinX;
-            const z2 = y * sinX + z1 * cosX;
-            
-            return { x: x1, y: y1, z: z2 };
-        }
-        
-        drawFace(vertices, textureCanvas) {
-            if (!textureCanvas) return;
-            
-            this.ctx.save();
-            this.ctx.beginPath();
-            this.ctx.moveTo(vertices[0].x, vertices[0].y);
-            for (let i = 1; i < vertices.length; i++) {
-                this.ctx.lineTo(vertices[i].x, vertices[i].y);
-            }
-            this.ctx.closePath();
-            this.ctx.clip();
-            
-            // Calculate texture mapping (simplified)
-            const minX = Math.min(...vertices.map(v => v.x));
-            const minY = Math.min(...vertices.map(v => v.y));
-            const maxX = Math.max(...vertices.map(v => v.x));
-            const maxY = Math.max(...vertices.map(v => v.y));
-            
-            this.ctx.drawImage(textureCanvas, minX, minY, maxX - minX, maxY - minY);
-            this.ctx.restore();
-            
-            // Draw wireframe
-            this.ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            this.ctx.lineWidth = 1;
-            this.ctx.stroke();
-        }
-        
-        render() {
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            this.ctx.fillStyle = '#1a1a1a';
-            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            
-            const size = 120;
-            
-            // Define cube vertices
-            const vertices = [
-                [-size, -size, -size], [size, -size, -size], [size, size, -size], [-size, size, -size], // back
-                [-size, -size, size], [size, -size, size], [size, size, size], [-size, size, size]       // front
-            ];
-            
-            // Rotate and project vertices
-            const projected = vertices.map(v => {
-                const rotated = this.rotatePoint(v[0], v[1], v[2]);
-                return this.project(rotated.x, rotated.y, rotated.z);
-            });
-            
-            // Define faces with their vertices and z-depth for sorting
-            const faces = [
-                { name: 'front', indices: [4, 5, 6, 7], texture: this.textures.front },
-                { name: 'back', indices: [1, 0, 3, 2], texture: this.textures.back },
-                { name: 'left', indices: [0, 4, 7, 3], texture: this.textures.left },
-                { name: 'right', indices: [5, 1, 2, 6], texture: this.textures.right },
-                { name: 'top', indices: [3, 7, 6, 2], texture: this.textures.top },
-                { name: 'bottom', indices: [0, 1, 5, 4], texture: this.textures.bottom }
-            ];
-            
-            // Calculate z-depth for each face and sort
-            faces.forEach(face => {
-                const faceVertices = face.indices.map(i => vertices[i]);
-                const rotatedVertices = faceVertices.map(v => this.rotatePoint(v[0], v[1], v[2]));
-                face.avgZ = rotatedVertices.reduce((sum, v) => sum + v.z, 0) / rotatedVertices.length;
-            });
-            
-            faces.sort((a, b) => a.avgZ - b.avgZ);
-            
-            // Draw faces back to front
-            faces.forEach(face => {
-                const faceVertices = face.indices.map(i => projected[i]);
-                this.drawFace(faceVertices, face.texture);
+                const data = generateFace(face, size, noise);
+                currentData[face] = data;
+                render(canvas, data.heightData, data.biomeData, size, currentView);
             });
         }
-    }
 
-    class Noise {
-        constructor(seed) {
-            this.seed = this.hashSeed(seed || Math.random().toString());
-        }
-        
-        hashSeed(s) {
-            let h = 0;
-            for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-            return Math.abs(h) / 2147483648;
-        }
-        
-        hash(x, y, z) {
-            let h = this.seed * 12345 + x * 374761393 + y * 668265263 + z * 1274126177;
-            h = (h ^ (h >>> 13)) * 1274126177;
-            return (h ^ (h >>> 16)) / 4294967296 + 0.5;
-        }
-        
-        smoothstep(t) { return t * t * (3 - 2 * t); }
-        
-        noise3D(x, y, z) {
-            const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
-            const fx = x - ix, fy = y - iy, fz = z - iz;
-            const sx = this.smoothstep(fx), sy = this.smoothstep(fy), sz = this.smoothstep(fz);
+        function switchView() {
+            currentView = currentView === 'heightmap' ? 'biome' : 'heightmap';
+            document.getElementById('viewLabel').textContent = `(${currentView === 'heightmap' ? 'Heightmap' : 'Biome'})`;
             
-            // Get hash values for cube corners
-            const c000 = this.hash(ix, iy, iz);
-            const c001 = this.hash(ix, iy, iz+1);
-            const c010 = this.hash(ix, iy+1, iz);
-            const c011 = this.hash(ix, iy+1, iz+1);
-            const c100 = this.hash(ix+1, iy, iz);
-            const c101 = this.hash(ix+1, iy, iz+1);
-            const c110 = this.hash(ix+1, iy+1, iz);
-            const c111 = this.hash(ix+1, iy+1, iz+1);
-            
-            // Trilinear interpolation
-            const c00 = c000*(1-sx) + c100*sx;
-            const c01 = c001*(1-sx) + c101*sx;
-            const c10 = c010*(1-sx) + c110*sx;
-            const c11 = c011*(1-sx) + c111*sx;
-            
-            const c0 = c00*(1-sy) + c10*sy;
-            const c1 = c01*(1-sy) + c11*sy;
-            
-            return c0*(1-sz) + c1*sz;
-        }
-        
-        fbm(x, y, z, octaves = 6) {
-            let value = 0, amp = 1, freq = 1, maxValue = 0;
-            for (let i = 0; i < octaves; i++) {
-                value += this.noise3D(x * freq, y * freq, z * freq) * amp;
-                maxValue += amp;
-                amp *= 0.5;
-                freq *= 2;
-            }
-            return value / maxValue;
-        }
-    }
-
-    function getCubeCoords(face, u, v) {
-        // Map texture coordinates to cube face coordinates
-        const s = u * 2 - 1; // [-1, 1]
-        const t = v * 2 - 1; // [-1, 1]
-        
-        let x, y, z;
-        
-        switch(face) {
-            case 'front':  x = s;  y = -t; z = 1;  break; // +Z
-            case 'back':   x = -s; y = -t; z = -1; break; // -Z  
-            case 'left':   x = -1; y = -t; z = -s; break; // -X
-            case 'right':  x = 1;  y = -t; z = s;  break; // +X
-            case 'top':    x = s;  y = 1;  z = t;  break; // +Y
-            case 'bottom': x = s;  y = -1; z = -t; break; // -Y
-        }
-        
-        // Normalize to unit sphere for better noise sampling
-        const len = Math.sqrt(x*x + y*y + z*z);
-        return { x: x/len, y: y/len, z: z/len };
-    }
-
-    function getBiome(height, temp, moisture) {
-        if (height < 0.3) return [30, 60, 130]; // Water
-        if (height < 0.35) return [220, 180, 140]; // Beach
-        
-        // Land biomes based on temperature and moisture
-        if (temp > 0.6) {
-            if (moisture < 0.3) return [200, 180, 120]; // Desert
-            if (moisture < 0.6) return [160, 180, 100]; // Savanna  
-            return [40, 100, 60]; // Tropical forest
-        } else if (temp > 0.3) {
-            if (moisture < 0.3) return [140, 200, 80]; // Grassland
-            if (moisture < 0.6) return [80, 120, 80]; // Temperate forest
-            return [20, 60, 20]; // Temperate rainforest
-        } else {
-            if (height > 0.8) return [240, 240, 250]; // Snow
-            if (moisture < 0.3) return [120, 140, 120]; // Tundra
-            return [60, 90, 40]; // Taiga
-        }
-    }
-
-    function generateFace(face, size, noise) {
-        const heightData = new Float32Array(size * size);
-        const biomeData = new Uint8ClampedArray(size * size * 4);
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const u = x / (size - 1);
-                const v = y / (size - 1);
-                const coords = getCubeCoords(face, u, v);
-                const idx = y * size + x;
-                
-                // Generate height using 3D noise
-                const height = Math.max(0, Math.min(1, 
-                    noise.fbm(coords.x * 4, coords.y * 4, coords.z * 4, 6) * 0.8 + 0.1
-                ));
-                
-                // Generate climate parameters
-                const temp = noise.fbm(coords.x * 2 + 1000, coords.y * 2, coords.z * 2, 4);
-                const moisture = noise.fbm(coords.x * 1.5, coords.y * 1.5 + 2000, coords.z * 1.5, 3);
-                
-                heightData[idx] = height;
-                const biome = getBiome(height, temp, moisture);
-                
-                const biomeIdx = idx * 4;
-                biomeData[biomeIdx] = biome[0];
-                biomeData[biomeIdx + 1] = biome[1];
-                biomeData[biomeIdx + 2] = biome[2];
-                biomeData[biomeIdx + 3] = 255;
+            if (currentData) {
+                Object.keys(currentData).forEach(face => {
+                    const canvas = document.getElementById(face);
+                    const data = currentData[face];
+                    render(canvas, data.heightData, data.biomeData, parseInt(document.getElementById('size').value), currentView);
+                });
             }
         }
-        
-        return { heightData, biomeData };
-    }
 
-    function render(canvas, heightData, biomeData, size, view) {
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        const imageData = ctx.createImageData(size, size);
-        const data = imageData.data;
-        
-        if (view === 'heightmap') {
-            for (let i = 0; i < heightData.length; i++) {
-                const val = Math.floor(heightData[i] * 255);
-                data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = val;
-                data[i * 4 + 3] = 255;
-            }
-        } else {
-            data.set(biomeData);
-        }
-        
-        ctx.putImageData(imageData, 0, 0);
-    }
-
-    function generate() {
-        const size = parseInt(document.getElementById('size').value);
-        const seedInput = document.getElementById('seed').value.trim();
-        const seed = seedInput || Math.random().toString(36).substr(2, 9);
-        
-        document.getElementById('seed').value = seed;
-        const noise = new Noise(seed);
-        
-        const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
-        currentData = {};
-        
-        faces.forEach(face => {
-            const canvas = document.getElementById(face);
-            const data = generateFace(face, size, noise);
-            currentData[face] = data;
-            render(canvas, data.heightData, data.biomeData, size, currentView);
-        });
-        
-        // Initialize 3D cube if not already done
-        if (!cube3D) {
-            cube3D = new Cube3D(document.getElementById('cube3d'));
-        }
-        
-        // Update 3D cube textures
-        cube3D.updateTextures(currentData, currentView);
-    }
-
-    function switchView() {
-        currentView = currentView === 'heightmap' ? 'biome' : 'heightmap';
-        document.getElementById('viewLabel').textContent = `(${currentView === 'heightmap' ? 'Heightmap' : 'Biome'})`;
-        
-        if (currentData) {
+        function downloadAll() {
+            if (!currentData) return;
             Object.keys(currentData).forEach(face => {
                 const canvas = document.getElementById(face);
-                const data = currentData[face];
-                render(canvas, data.heightData, data.biomeData, parseInt(document.getElementById('size').value), currentView);
+                const link = document.createElement('a');
+                link.download = `${face}_${currentView}.png`;
+                link.href = canvas.toDataURL();
+                link.click();
             });
-            
-            // Update 3D cube textures
-            if (cube3D) {
-                cube3D.updateTextures(currentData, currentView);
-            }
         }
-    }
 
-    function downloadAll() {
-        if (!currentData) return;
-        Object.keys(currentData).forEach(face => {
-            const canvas = document.getElementById(face);
-            const link = document.createElement('a');
-            link.download = `${face}_${currentView}.png`;
-            link.href = canvas.toDataURL();
-            link.click();
-        });
-    }
-
-    generate();
-</script>
-```
-
+        generate();
+    </script>
 </body>
 </html>
