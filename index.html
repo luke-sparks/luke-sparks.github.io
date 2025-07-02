@@ -14,7 +14,7 @@
             grid-template-rows: repeat(3, 80px); 
             gap: 1px; 
         }
-        .face canvas { width: 100%; height: 100%; border: 1px solid #999; }
+        .face canvas { width: 100%; height: 100%; border: 2px solid red; }
     </style>
 </head>
 <body>
@@ -26,6 +26,7 @@
         <button onclick="switchView()">Toggle View</button>
         <button onclick="toggleLayers()">Show Layers</button>
         <button onclick="downloadAll()">Download All</button>
+        <button onclick="downloadCubeNet()">Download Cube Net</button>
         <span id="viewLabel">(Heightmap)</span>
     </div>
     
@@ -702,6 +703,90 @@
             }
         }
 
+        function downloadCubeNet() {
+            if (!currentData) {
+                alert('Please generate a map first!');
+                return;
+            }
+            
+            const size = parseInt(document.getElementById('size').value) || 128;
+            const timestamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+            const seedValue = document.getElementById('seed').value || 'random';
+            const sizeValue = document.getElementById('size').value || '128';
+            
+            // Create combined canvas for cube net (4x3 grid)
+            const combinedCanvas = document.createElement('canvas');
+            const borderWidth = 2; // Match the red border width
+            const faceSize = size;
+            const totalWidth = (faceSize + borderWidth) * 4 + borderWidth;
+            const totalHeight = (faceSize + borderWidth) * 3 + borderWidth;
+            
+            combinedCanvas.width = totalWidth;
+            combinedCanvas.height = totalHeight;
+            const ctx = combinedCanvas.getContext('2d');
+            
+            // Fill background with black
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, totalWidth, totalHeight);
+            
+            // Draw red grid lines
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = borderWidth;
+            
+            // Vertical lines
+            for (let i = 0; i <= 4; i++) {
+                const x = i * (faceSize + borderWidth) + borderWidth / 2;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, totalHeight);
+                ctx.stroke();
+            }
+            
+            // Horizontal lines
+            for (let i = 0; i <= 3; i++) {
+                const y = i * (faceSize + borderWidth) + borderWidth / 2;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(totalWidth, y);
+                ctx.stroke();
+            }
+            
+            // Define face positions in the cube net (4x3 grid)
+            const facePositions = {
+                'top': { x: 1, y: 0 },
+                'left': { x: 0, y: 1 },
+                'front': { x: 1, y: 1 },
+                'right': { x: 2, y: 1 },
+                'back': { x: 3, y: 1 },
+                'bottom': { x: 1, y: 2 }
+            };
+            
+            // Draw each face at its position
+            Object.keys(facePositions).forEach(face => {
+                const canvas = document.getElementById(face);
+                if (canvas) {
+                    const pos = facePositions[face];
+                    const x = pos.x * (faceSize + borderWidth) + borderWidth;
+                    const y = pos.y * (faceSize + borderWidth) + borderWidth;
+                    
+                    ctx.drawImage(canvas, x, y, faceSize, faceSize);
+                }
+            });
+            
+            // Download the combined image
+            try {
+                const link = document.createElement('a');
+                link.style.display = 'none';
+                link.download = `cubenet_${currentView}_${sizeValue}mi_${seedValue}_${timestamp}.png`;
+                link.href = combinedCanvas.toDataURL();
+                link.click();
+                
+                console.log(`Downloaded cube net (${currentView} view): ${totalWidth}x${totalHeight}px`);
+            } catch (error) {
+                console.error('Failed to download cube net:', error);
+            }
+        }
+
         function downloadAll() {
             console.log(`Initiated download of 6cube faces (${currentView} view)`);
             if (!currentData) {
@@ -717,7 +802,6 @@
             Object.keys(currentData).forEach(face => {
                 const canvas = document.getElementById(face);
                 const link = document.createElement('a');
-                // link.download = `${face}_${currentView}.png`;
                 link.download = `${face}_${currentView}_${sizeValue}mi_${seedValue}_${timestamp}.png`;
                 link.href = canvas.toDataURL();
                 link.click();
