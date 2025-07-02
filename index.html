@@ -24,6 +24,7 @@
         <button onclick="randomSeed()">Random Seed</button>
         <button onclick="generate()">Generate</button>
         <button onclick="switchView()">Toggle View</button>
+        <button onclick="toggleLayers()">Show Layers</button>
         <button onclick="downloadAll()">Download All</button>
         <span id="viewLabel">(Heightmap)</span>
     </div>
@@ -39,15 +40,61 @@
             </div>
             <div style="font-size: 12px; margin-top: 10px; color: #666;">
                 Realistic scaling: Islands ~20mi, Continents ~80mi, Rivers ~4mi wide.<br>
-                Larger maps = more features (more space), smaller maps = fewer features (less space).<br>
+                Heightmap values: Ocean(0), Beach(1), Lowlands(2), Hills(3), Highlands(5), Mountains(8), High peaks(11), Snow caps(15).<br>
                 Edge continuity is mathematically guaranteed and tested on generation.
             </div>
+        </div>
+    </div>
+
+    <div id="layersSection" style="display: none; margin-top: 30px;">
+        <h4>Terrain Generation Layers (Front Face)</h4>
+        <div style="display: grid; grid-template-columns: repeat(4, 150px); gap: 15px; margin-top: 15px;">
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">continents</div>
+                <canvas id="layer-continents" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~80 mile diameter</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">islands</div>
+                <canvas id="layer-islands" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~20 mile diameter</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">mountains</div>
+                <canvas id="layer-mountains" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~40 mile width</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">rivers</div>
+                <canvas id="layer-rivers" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~4 mile width</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">hills</div>
+                <canvas id="layer-hills" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~8 mile features</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">details</div>
+                <canvas id="layer-details" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~2 mile features</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">tectonics</div>
+                <canvas id="layer-tectonics" width="120" height="120" style="border: 1px solid #999;"></canvas>
+                <div style="font-size: 10px; color: #666; margin-top: 2px;">~60 mile features</div>
+            </div>
+        </div>
+        <div style="margin-top: 15px; font-size: 12px; color: #666;">
+            Each layer contributes to final terrain. Heightmap uses remapped values: Ocean(0), Beach(1), Lowlands(2), Hills(3), Highlands(5), Mountains(8), High peaks(11), Snow caps(15).
         </div>
     </div>
 
     <script>
         let currentView = 'heightmap';
         let currentData = null;
+        let currentLayers = null;
+        let layersVisible = false;
 
         class Noise {
             constructor(seed) {
@@ -150,124 +197,34 @@
             return { x: x/len, y: y/len, z: z/len };
         }
 
-        function getBiome(height, temperature, moisture) {
-            // Realistic biome classification based on height, temperature, and moisture
+        function getBiome(heightLevel, temperature, moisture) {
+            // Exactly 10 colors based on height levels 1-10
+            // Levels 1-3: Ocean depths, Levels 4-10: Land elevations
             
-            // Water bodies with depth-based coloring
-            if (height < 0.2) {
-                // Deep ocean
-                const depth = 1 - (height / 0.2);
-                return [
-                    Math.floor(10 + depth * 20),   // Dark blue depths
-                    Math.floor(30 + depth * 50),
-                    Math.floor(60 + depth * 100)
-                ];
-            } else if (height < 0.3) {
-                // Shallow water/coastal areas
-                const shallowness = (height - 0.2) / 0.1;
-                return [
-                    Math.floor(20 + shallowness * 80),
-                    Math.floor(80 + shallowness * 120),
-                    Math.floor(160 + shallowness * 95)
-                ];
-            } else if (height < 0.32) {
-                // Beach/sand transition
-                return [240, 220, 180];
-            }
+            const colors = [
+                null, // Index 0 unused
+                [15, 30, 80],   // Level 1: Deep ocean (darkest blue)
+                [25, 50, 120],  // Level 2: Medium ocean  
+                [40, 80, 160],  // Level 3: Shallow ocean (lightest blue)
+                [220, 200, 160], // Level 4: Beach/coastal (sandy)
+                [120, 180, 80],  // Level 5: Lowlands/plains (green)
+                [100, 150, 70],  // Level 6: Hills (darker green)
+                [140, 120, 80],  // Level 7: Highlands (brown-green)
+                [160, 140, 100], // Level 8: Mountains (brown)
+                [180, 160, 140], // Level 9: High mountains (gray-brown)
+                [240, 240, 250]  // Level 10: Snow peaks (white)
+            ];
             
-            // Land biomes based on realistic climate zones
-            
-            // High altitude (mountains and alpine)
-            if (height > 0.8) {
-                if (temperature < 0.3) {
-                    return [250, 250, 255]; // Snow caps
-                } else if (temperature < 0.5) {
-                    return [180, 180, 190]; // Alpine rock
-                } else {
-                    return [160, 140, 120]; // High desert mountains
-                }
-            }
-            
-            // High elevation but not peaks
-            if (height > 0.65) {
-                if (temperature < 0.4) {
-                    return [120, 140, 130]; // Alpine tundra
-                } else if (moisture > 0.5) {
-                    return [80, 100, 70]; // Montane forest
-                } else {
-                    return [140, 120, 90]; // Mountain steppe
-                }
-            }
-            
-            // Medium elevation (hills and plateaus)
-            if (height > 0.5) {
-                if (temperature > 0.7) {
-                    if (moisture < 0.2) {
-                        return [200, 180, 120]; // High desert
-                    } else if (moisture < 0.5) {
-                        return [180, 160, 100]; // Dry woodland
-                    } else {
-                        return [100, 130, 80]; // Temperate highland
-                    }
-                } else if (temperature > 0.4) {
-                    if (moisture > 0.6) {
-                        return [70, 120, 70]; // Temperate forest
-                    } else {
-                        return [150, 180, 100]; // Grassland hills
-                    }
-                } else {
-                    return [90, 110, 80]; // Boreal hills
-                }
-            }
-            
-            // Low elevation (plains and lowlands)
-            if (temperature > 0.8) {
-                // Hot climates
-                if (moisture < 0.15) {
-                    return [220, 200, 140]; // Hot desert
-                } else if (moisture < 0.4) {
-                    return [200, 180, 120]; // Semi-arid
-                } else if (moisture < 0.7) {
-                    return [160, 200, 100]; // Tropical savanna
-                } else {
-                    return [40, 120, 60]; // Tropical rainforest
-                }
-            } else if (temperature > 0.6) {
-                // Warm climates
-                if (moisture < 0.3) {
-                    return [190, 170, 110]; // Warm desert
-                } else if (moisture < 0.6) {
-                    return [170, 190, 110]; // Mediterranean/chaparral
-                } else {
-                    return [80, 140, 80]; // Temperate deciduous forest
-                }
-            } else if (temperature > 0.4) {
-                // Cool climates
-                if (moisture < 0.4) {
-                    return [160, 200, 120]; // Cool grassland/steppe
-                } else {
-                    return [60, 100, 60]; // Temperate coniferous forest
-                }
-            } else if (temperature > 0.2) {
-                // Cold climates
-                if (moisture > 0.5) {
-                    return [50, 80, 50]; // Boreal forest/taiga
-                } else {
-                    return [120, 140, 110]; // Cold steppe
-                }
-            } else {
-                // Very cold climates
-                if (moisture > 0.3) {
-                    return [100, 120, 100]; // Tundra
-                } else {
-                    return [140, 150, 140]; // Cold desert/polar desert
-                }
-            }
+            // Return the exact color for this height level
+            return colors[heightLevel] || [0, 0, 0];
         }
 
         function generateFace(face, size, noise) {
             const heightData = new Float32Array(size * size);
             const biomeData = new Uint8ClampedArray(size * size * 4);
+            
+            // Store individual layers for debugging/visualization
+            const layers = {};
             
             // Scale-aware terrain generation (1 pixel = 1 mile)
             const milesPerSide = size;
@@ -281,6 +238,15 @@
             const hillScale = milesPerSide / 8;          // Hills ~8 miles across
             const detailScale = milesPerSide / 2;        // Fine details ~2 miles
             
+            // Pre-calculate all layers
+            const continentsLayer = new Float32Array(size * size);
+            const islandsLayer = new Float32Array(size * size);
+            const mountainsLayer = new Float32Array(size * size);
+            const riversLayer = new Float32Array(size * size);
+            const hillsLayer = new Float32Array(size * size);
+            const detailsLayer = new Float32Array(size * size);
+            const tectonicsLayer = new Float32Array(size * size);
+            
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
                     const u = x / (size - 1);
@@ -290,7 +256,7 @@
                     const coords = getCubeCoords(face, u, v);
                     const idx = y * size + x;
                     
-                    // Multi-layer terrain generation with proper scaling
+                    // Generate all layers
                     
                     // 1. Continental masses (~80 mile diameter)
                     const continents = noise.fbm(
@@ -299,6 +265,7 @@
                         coords.z * continentScale, 
                         3
                     ) * 0.7;
+                    continentsLayer[idx] = Math.max(0, Math.min(1, continents + 0.5));
                     
                     // 2. Island chains (~20 mile diameter)
                     const islands = noise.fbm(
@@ -307,6 +274,7 @@
                         coords.z * islandScale + 100, 
                         4
                     ) * 0.4;
+                    islandsLayer[idx] = Math.max(0, Math.min(1, islands + 0.5));
                     
                     // 3. Mountain ranges (~40 mile width)
                     const mountains = noise.fbm(
@@ -315,6 +283,7 @@
                         coords.z * mountainScale + 200, 
                         3
                     ) * 0.5;
+                    mountainsLayer[idx] = Math.max(0, Math.min(1, mountains + 0.5));
                     
                     // 4. River valleys and erosion (~4 mile width)
                     const rivers = noise.fbm(
@@ -323,6 +292,7 @@
                         coords.z * riverScale + 300, 
                         2
                     );
+                    riversLayer[idx] = Math.max(0, Math.min(1, Math.abs(rivers)));
                     
                     // 5. Hills and local terrain (~8 mile features)
                     const hills = noise.fbm(
@@ -331,6 +301,7 @@
                         coords.z * hillScale + 400, 
                         4
                     ) * 0.2;
+                    hillsLayer[idx] = Math.max(0, Math.min(1, hills + 0.5));
                     
                     // 6. Fine surface details (~2 mile features)
                     const details = noise.fbm(
@@ -339,24 +310,20 @@
                         coords.z * detailScale + 500, 
                         3
                     ) * 0.1;
+                    detailsLayer[idx] = Math.max(0, Math.min(1, details + 0.5));
                     
-                    // Combine terrain layers
-                    let height = continents * 0.4 + islands * 0.25 + mountains * 0.2 + hills * 0.1 + details * 0.05;
+                    // Tectonic activity
+                    const tectonicScale = milesPerSide / 60; // Tectonic features ~60 miles
+                    const tectonics = noise.fbm(
+                        coords.x * tectonicScale + 700, 
+                        coords.y * tectonicScale + 700, 
+                        coords.z * tectonicScale + 700, 
+                        2
+                    );
+                    tectonicsLayer[idx] = Math.max(0, Math.min(1, tectonics + 0.5));
                     
-                    // Create ocean basins (ensures we have water between landmasses)
-                    // const oceanScale = milesPerSide / 120; // Ocean basins ~120 miles across
-                    // const oceanMask = noise.fbm(
-                    //     coords.x * oceanScale + 600, 
-                    //     coords.y * oceanScale + 600, 
-                    //     coords.z * oceanScale + 600, 
-                    //     2
-                    // );
-                    
-                    // // More aggressive ocean creation for smaller maps
-                    // const oceanThreshold = milesPerSide < 100 ? 0.4 : 0.3;
-                    // if (oceanMask < oceanThreshold) {
-                    //     height = Math.min(height, 0.1 + oceanMask * 0.1); // Deep ocean
-                    // }
+                    // Combine terrain layers (increased mountain contribution)
+                    let height = continents * 0.35 + islands * 0.2 + mountains * 0.3 + hills * 0.1 + details * 0.05;
                     
                     // River carving (creates river valleys ~4 miles wide)
                     if (height > 0.25 && milesPerSide >= 10) {
@@ -368,19 +335,30 @@
                         }
                     }
                     
-                    // Mountain building (tectonic activity)
-                    const tectonicScale = milesPerSide / 60; // Tectonic features ~60 miles
-                    const tectonics = noise.fbm(
-                        coords.x * tectonicScale + 700, 
-                        coords.y * tectonicScale + 700, 
-                        coords.z * tectonicScale + 700, 
+                    // Enhanced mountain building (more aggressive peak creation)
+                    if (tectonics > 0.5 && height > 0.25) {
+                        // Create mountain peaks - much more aggressive
+                        const mountainBoost = (tectonics - 0.5) * 1.5; // Increased from 0.8
+                        height += mountainBoost;
+                    }
+                    
+                    // Additional peak formation for very high tectonic activity
+                    if (tectonics > 0.75 && height > 0.4) {
+                        const superPeaks = (tectonics - 0.75) * 2.0; // Extra boost for highest peaks
+                        height += superPeaks;
+                    }
+                    
+                    // Mountain ridge enhancement (creates connected mountain ranges)
+                    const ridgeScale = milesPerSide / 30; // Ridge features ~30 miles
+                    const ridges = noise.fbm(
+                        coords.x * ridgeScale + 1100, 
+                        coords.y * ridgeScale + 1100, 
+                        coords.z * ridgeScale + 1100, 
                         2
                     );
                     
-                    if (tectonics > 0.6 && height > 0.3) {
-                        // Mountain peaks - scale with map size for realism
-                        const mountainHeight = 0.8;
-                        height += (tectonics - 0.6) * mountainHeight;
+                    if (ridges > 0.6 && height > 0.5) {
+                        height += (ridges - 0.6) * 1.2; // Add ridge peaks
                     }
                     
                     // Coastal erosion and beaches (only for maps with sufficient detail)
@@ -401,9 +379,60 @@
                     
                     // Ensure height is in valid range
                     height = Math.max(0, Math.min(1, height));
-                    heightData[idx] = height;
                     
-                    // Climate generation appropriate for scale
+                    // Quantize height to 10 discrete levels (1-10)
+                    // 0.0-0.3 -> levels 1-3 (ocean depths)
+                    // 0.3-1.0 -> levels 4-10 (land elevations)
+                    let quantizedHeight;
+                    if (height <= 0.3) {
+                        // Ocean: map 0-0.3 to levels 1-3
+                        quantizedHeight = Math.floor((height / 0.3) * 3) + 1;
+                        quantizedHeight = Math.max(1, Math.min(3, quantizedHeight));
+                    } else {
+                        // Land: map 0.3-1.0 to levels 4-10
+                        quantizedHeight = Math.floor(((height - 0.3) / 0.7) * 7) + 4;
+                        quantizedHeight = Math.max(4, Math.min(10, quantizedHeight));
+                        
+                        // Minimize large sand areas - convert level 4 to level 5 if not near water
+                        if (quantizedHeight === 4) {
+                            // Check if this pixel is actually coastal (near lower elevation)
+                            let nearWater = false;
+                            const checkRadius = Math.max(1, Math.floor(size / 100)); // Adaptive radius
+                            
+                            for (let dy = -checkRadius; dy <= checkRadius && !nearWater; dy++) {
+                                for (let dx = -checkRadius; dx <= checkRadius && !nearWater; dx++) {
+                                    const checkX = Math.max(0, Math.min(size-1, x + dx));
+                                    const checkY = Math.max(0, Math.min(size-1, y + dy));
+                                    const checkU = checkX / (size - 1);
+                                    const checkV = checkY / (size - 1);
+                                    const checkCoords = getCubeCoords(face, checkU, checkV);
+                                    
+                                    // Sample height at nearby location
+                                    const checkContinents = noise.fbm(checkCoords.x * continentScale, checkCoords.y * continentScale, checkCoords.z * continentScale, 3) * 0.7;
+                                    const checkIslands = noise.fbm(checkCoords.x * islandScale + 100, checkCoords.y * islandScale + 100, checkCoords.z * islandScale + 100, 4) * 0.4;
+                                    const checkMountains = noise.fbm(checkCoords.x * mountainScale + 200, checkCoords.y * mountainScale + 200, checkCoords.z * mountainScale + 200, 3) * 0.5;
+                                    const checkHills = noise.fbm(checkCoords.x * hillScale + 400, checkCoords.y * hillScale + 400, checkCoords.z * hillScale + 400, 4) * 0.2;
+                                    const checkDetails = noise.fbm(checkCoords.x * detailScale + 500, checkCoords.y * detailScale + 500, checkCoords.z * detailScale + 500, 3) * 0.1;
+                                    
+                                    let checkHeight = checkContinents * 0.35 + checkIslands * 0.2 + checkMountains * 0.3 + checkHills * 0.1 + checkDetails * 0.05;
+                                    checkHeight = Math.max(0, Math.min(1, checkHeight));
+                                    
+                                    if (checkHeight <= 0.3) {
+                                        nearWater = true; // Found water nearby
+                                    }
+                                }
+                            }
+                            
+                            // If not near water, convert sand to grassland
+                            if (!nearWater) {
+                                quantizedHeight = 5; // Convert to lowlands/plains
+                            }
+                        }
+                    }
+                    
+                    heightData[idx] = quantizedHeight / 10; // Store as 0.1-1.0 for compatibility
+                    
+                    // Generate climate for biome (use original continuous height for climate calc)
                     
                     // Latitude-based temperature (poles are colder)
                     let latitude = Math.abs(coords.y);
@@ -436,7 +465,7 @@
                     const oceanInfluence = Math.max(0, 0.5 - Math.max(0, height - 0.2) * 2);
                     const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
                     
-                    const biome = getBiome(height, temperature, moisture);
+                    const biome = getBiome(quantizedHeight, temperature, moisture);
                     
                     const biomeIdx = idx * 4;
                     biomeData[biomeIdx] = biome[0];
@@ -446,7 +475,16 @@
                 }
             }
             
-            return { heightData, biomeData };
+            // Store layers
+            layers.continents = continentsLayer;
+            layers.islands = islandsLayer;
+            layers.mountains = mountainsLayer;
+            layers.rivers = riversLayer;
+            layers.hills = hillsLayer;
+            layers.details = detailsLayer;
+            layers.tectonics = tectonicsLayer;
+            
+            return { heightData, biomeData, layers };
         }
 
         function render(canvas, heightData, biomeData, size, view) {
@@ -457,8 +495,23 @@
             const data = imageData.data;
             
             if (view === 'heightmap') {
+                // Height value remapping: 1-3→0, 4→1, 5→2, 6→3, 7→5, 8→8, 9→11, 10→15
+                const heightMapping = {
+                    1: 0, 2: 0, 3: 0,  // Ocean depths → 0
+                    4: 1,              // Beach → 1
+                    5: 2,              // Lowlands → 2
+                    6: 3,              // Hills → 3
+                    7: 5,              // Highlands → 5
+                    8: 8,              // Mountains → 8
+                    9: 11,             // High mountains → 11
+                    10: 15             // Snow peaks → 15
+                };
+                
                 for (let i = 0; i < heightData.length; i++) {
-                    const val = Math.floor(heightData[i] * 255);
+                    // Convert quantized height (0.1-1.0) back to discrete levels
+                    const heightLevel = Math.round(heightData[i] * 10);
+                    const remappedValue = heightMapping[heightLevel] || 0;
+                    const val = Math.floor((remappedValue / 15) * 255); // Map 0-15 to 0-255
                     data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = val;
                     data[i * 4 + 3] = 255;
                 }
@@ -467,6 +520,50 @@
             }
             
             ctx.putImageData(imageData, 0, 0);
+        }
+
+        function toggleLayers() {
+            layersVisible = !layersVisible;
+            const layersSection = document.getElementById('layersSection');
+            
+            if (layersVisible) {
+                layersSection.style.display = 'block';
+                if (currentLayers) {
+                    renderLayers(currentLayers);
+                }
+            } else {
+                layersSection.style.display = 'none';
+            }
+        }
+
+        function renderLayers(layers) {
+            const layerNames = ['continents', 'islands', 'mountains', 'rivers', 'hills', 'details', 'tectonics'];
+            
+            layerNames.forEach(layerName => {
+                const canvas = document.getElementById(`layer-${layerName}`);
+                const layerData = layers[layerName];
+                
+                if (canvas && layerData) {
+                    const size = Math.sqrt(layerData.length);
+                    canvas.width = size;
+                    canvas.height = size;
+                    
+                    const ctx = canvas.getContext('2d');
+                    const imageData = ctx.createImageData(size, size);
+                    const data = imageData.data;
+                    
+                    // Render as grayscale
+                    for (let i = 0; i < layerData.length; i++) {
+                        const val = Math.floor(layerData[i] * 255);
+                        data[i * 4] = val;
+                        data[i * 4 + 1] = val;
+                        data[i * 4 + 2] = val;
+                        data[i * 4 + 3] = 255;
+                    }
+                    
+                    ctx.putImageData(imageData, 0, 0);
+                }
+            });
         }
 
         function randomSeed() {
@@ -564,10 +661,22 @@
                 const data = generateFace(face, size, noise);
                 currentData[face] = data;
                 render(canvas, data.heightData, data.biomeData, size, currentView);
+                
+                // Store layers from front face for layer visualization
+                if (face === 'front') {
+                    currentLayers = data.layers;
+                }
             });
             
+            // Update layer display if visible
+            if (layersVisible && currentLayers) {
+                renderLayers(currentLayers);
+            }
+            
             // Log scale information with expected feature counts
-            console.log(`Generated terrain features for ${size}x${size} square miles:`);
+            console.log(`Generated quantized terrain for ${size}x${size} square miles:`);
+            console.log(`- Heights: Remapped values (Ocean:0, Beach:1, Lowlands:2, Hills:3, Highlands:5, Mountains:8, High:11, Snow:15)`);
+            console.log(`- Colors: Exactly 10 unique biome colors`);
             console.log(`- Expected continents: ~${Math.floor(size/80)} (80 miles each)`);
             console.log(`- Expected islands: ~${Math.floor(size/20)} (20 miles each)`);
             console.log(`- Expected mountain ranges: ~${Math.floor(size/40)} (40 miles each)`);
@@ -591,11 +700,22 @@
         }
 
         function downloadAll() {
-            if (!currentData) return;
+            console.log(`Initiated download of ${faces.length} cube faces (${currentView} view)`);
+            if (!currentData) {
+                alert('Please generate a map first!');
+                console.log('No map to download');
+                return;
+            }
+
+            const timestamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+            const seedValue = document.getElementById('seed').value || 'random';
+            const sizeValue = document.getElementById('size').value || '128';
+            
             Object.keys(currentData).forEach(face => {
                 const canvas = document.getElementById(face);
                 const link = document.createElement('a');
-                link.download = `${face}_${currentView}.png`;
+                // link.download = `${face}_${currentView}.png`;
+                link.download = `${face}_${currentView}_${sizeValue}mi_${seedValue}_${timestamp}.png`;
                 link.href = canvas.toDataURL();
                 link.click();
             });
