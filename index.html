@@ -511,9 +511,12 @@
                     // Convert quantized height (0.1-1.0) back to discrete levels
                     const heightLevel = Math.round(heightData[i] * 10);
                     const remappedValue = heightMapping[heightLevel] || 0;
-                    const val = Math.floor((remappedValue / 15) * 255); // Map 0-15 to 0-255
-                    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = val;
-                    data[i * 4 + 3] = 255;
+                    const colorValue = remappedValue * 8; // Height value * 8 for RGB
+                    
+                    data[i * 4] = colorValue;     // R
+                    data[i * 4 + 1] = colorValue; // G
+                    data[i * 4 + 2] = colorValue; // B
+                    data[i * 4 + 3] = 255;       // A
                 }
             } else {
                 data.set(biomeData);
