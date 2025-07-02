@@ -200,90 +200,100 @@
         }
 
         function enhanceOceanDepths(heightData, size) {
-            // Quick ocean depth enhancement for more dramatic underwater terrain
-            const milesPerPixel = 1; // 1 pixel = 1 mile
-            const shallowMinRange = 2; // 2 miles minimum shallow water
-            const shallowMaxRange = 15; // 15 miles maximum shallow water
+            // Optimized ocean depth enhancement
+            const shallowMinRange = 2;
+            const shallowMaxRange = 15;
+            const searchRadius = Math.min(shallowMaxRange + 5, size / 4);
             
-            // Create a copy to work with
-            const newHeightData = new Float32Array(heightData);
+            // Create distance map using efficient flood-fill algorithm
+            const distanceMap = new Float32Array(size * size);
+            const oceanMask = new Uint8Array(size * size);
+            const queue = [];
             
-            // Find all ocean pixels and land pixels
-            const oceanPixels = [];
-            const landPixels = [];
-            
+            // Initialize ocean mask and find land pixels
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
                     const idx = y * size + x;
                     const height = Math.round(heightData[idx] * 10);
                     
                     if (height <= 3) {
-                        oceanPixels.push({x, y, idx});
+                        oceanMask[idx] = 1;
+                        distanceMap[idx] = Infinity;
                     } else {
-                        landPixels.push({x, y, idx});
+                        oceanMask[idx] = 0;
+                        distanceMap[idx] = 0;
+                        queue.push({x, y, dist: 0});
                     }
                 }
             }
             
-            if (oceanPixels.length === 0) return; // No ocean to enhance
+            if (queue.length === 0) return; // No land found
             
-            // Calculate distances from shore for each ocean pixel
-            oceanPixels.forEach(ocean => {
-                let minDistanceToLand = Infinity;
+            // Breadth-first search for distance calculation
+            let queuePos = 0;
+            while (queuePos < queue.length) {
+                const {x, y, dist} = queue[queuePos++];
                 
-                // Check distance to nearby land (efficient local search)
-                const searchRadius = Math.min(shallowMaxRange + 5, size / 4);
-                
-                for (let dy = -searchRadius; dy <= searchRadius; dy++) {
-                    for (let dx = -searchRadius; dx <= searchRadius; dx++) {
-                        const checkX = ocean.x + dx;
-                        const checkY = ocean.y + dy;
+                // Check 8-connected neighbors
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
                         
-                        if (checkX >= 0 && checkX < size && checkY >= 0 && checkY < size) {
-                            const checkIdx = checkY * size + checkX;
-                            const checkHeight = Math.round(heightData[checkIdx] * 10);
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        
+                        if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                            const nIdx = ny * size + nx;
+                            const newDist = dist + Math.sqrt(dx * dx + dy * dy);
                             
-                            if (checkHeight > 3) { // Found land
-                                const distance = Math.sqrt(dx * dx + dy * dy);
-                                minDistanceToLand = Math.min(minDistanceToLand, distance);
+                            if (oceanMask[nIdx] && newDist < distanceMap[nIdx]) {
+                                distanceMap[nIdx] = newDist;
+                                if (newDist <= searchRadius) {
+                                    queue.push({x: nx, y: ny, dist: newDist});
+                                }
                             }
                         }
                     }
                 }
-                
-                // Assign ocean depth based on distance from shore
-                let depthLevel;
-                if (minDistanceToLand <= shallowMinRange) {
-                    depthLevel = 3; // Shallow water (closest to shore)
-                } else if (minDistanceToLand <= shallowMaxRange) {
-                    // Gradient from shallow to medium
-                    const ratio = (minDistanceToLand - shallowMinRange) / (shallowMaxRange - shallowMinRange);
-                    depthLevel = ratio < 0.5 ? 3 : 2; // More shallow, some medium
-                } else {
-                    depthLevel = 1; // Deep ocean
-                }
-                
-                newHeightData[ocean.idx] = depthLevel / 10;
-            });
+            }
             
-            // Ensure at least 10% deep ocean
-            const currentDeepOcean = oceanPixels.filter(p => Math.round(newHeightData[p.idx] * 10) === 1).length;
-            const requiredDeepOcean = Math.ceil(oceanPixels.length * 0.1);
+            // Apply depth levels and count pixels in single pass
+            let deepOceanCount = 0;
+            let mediumOceanIndices = [];
             
-            if (currentDeepOcean < requiredDeepOcean) {
-                // Convert some medium depth ocean to deep ocean
-                const mediumOcean = oceanPixels.filter(p => Math.round(newHeightData[p.idx] * 10) === 2);
-                const toConvert = Math.min(requiredDeepOcean - currentDeepOcean, mediumOcean.length);
-                
-                // Convert the furthest medium ocean pixels to deep ocean
-                for (let i = 0; i < toConvert; i++) {
-                    newHeightData[mediumOcean[i].idx] = 1 / 10;
+            for (let i = 0; i < size * size; i++) {
+                if (oceanMask[i]) {
+                    const distance = distanceMap[i];
+                    let depthLevel;
+                    
+                    if (distance <= shallowMinRange) {
+                        depthLevel = 3;
+                    } else if (distance <= shallowMaxRange) {
+                        const ratio = (distance - shallowMinRange) / (shallowMaxRange - shallowMinRange);
+                        depthLevel = ratio < 0.5 ? 3 : 2;
+                    } else {
+                        depthLevel = 1;
+                    }
+                    
+                    heightData[i] = depthLevel / 10;
+                    
+                    if (depthLevel === 1) {
+                        deepOceanCount++;
+                    } else if (depthLevel === 2) {
+                        mediumOceanIndices.push(i);
+                    }
                 }
             }
             
-            // Copy enhanced data back
-            for (let i = 0; i < heightData.length; i++) {
-                heightData[i] = newHeightData[i];
+            // Ensure at least 10% deep ocean
+            const totalOcean = queue.length > 0 ? size * size - queue.length + (size * size - queuePos) : 0;
+            const requiredDeepOcean = Math.ceil(totalOcean * 0.1);
+            
+            if (deepOceanCount < requiredDeepOcean && mediumOceanIndices.length > 0) {
+                const toConvert = Math.min(requiredDeepOcean - deepOceanCount, mediumOceanIndices.length);
+                for (let i = 0; i < toConvert; i++) {
+                    heightData[mediumOceanIndices[i]] = 1 / 10;
+                }
             }
         }
 
@@ -320,15 +330,19 @@
             const milesPerSide = size;
             
             // Calculate feature scales based on desired real-world sizes
-            // Larger maps will have MORE features, smaller maps will have FEWER features
-            const continentScale = milesPerSide / 80;    // Continents ~80 miles diameter
-            const islandScale = milesPerSide / 20;       // Islands ~20 miles diameter  
-            const mountainScale = milesPerSide / 40;     // Mountain ranges ~40 miles across
-            const riverScale = milesPerSide / 4;         // Rivers ~4 miles wide
-            const hillScale = milesPerSide / 8;          // Hills ~8 miles across
-            const detailScale = milesPerSide / 2;        // Fine details ~2 miles
+            const continentScale = milesPerSide / 80;
+            const islandScale = milesPerSide / 20;
+            const mountainScale = milesPerSide / 40;
+            const riverScale = milesPerSide / 4;
+            const hillScale = milesPerSide / 8;
+            const detailScale = milesPerSide / 2;
+            const tectonicScale = milesPerSide / 60;
+            const ridgeScale = milesPerSide / 30;
+            const coastalScale = milesPerSide / 6;
+            const climateScale = milesPerSide / 100;
+            const precipScale = milesPerSide / 80;
             
-            // Pre-calculate all layers
+            // Pre-allocate all layers
             const continentsLayer = new Float32Array(size * size);
             const islandsLayer = new Float32Array(size * size);
             const mountainsLayer = new Float32Array(size * size);
@@ -337,227 +351,158 @@
             const detailsLayer = new Float32Array(size * size);
             const tectonicsLayer = new Float32Array(size * size);
             
+            // Pre-calculate coordinates and noise in single pass
+            const coords = new Array(size * size);
+            const checkRadius = Math.max(1, Math.floor(size / 100));
+            
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
+                    const idx = y * size + x;
                     const u = x / (size - 1);
                     const v = y / (size - 1);
                     
                     // Get 3D coordinates ensuring perfect edge continuity
-                    const coords = getCubeCoords(face, u, v);
-                    const idx = y * size + x;
+                    coords[idx] = getCubeCoords(face, u, v);
+                    const coord = coords[idx];
                     
-                    // Generate all layers
-                    
-                    // 1. Continental masses (~80 mile diameter)
-                    const continents = noise.fbm(
-                        coords.x * continentScale, 
-                        coords.y * continentScale, 
-                        coords.z * continentScale, 
-                        3
-                    ) * 0.7;
+                    // Generate all noise layers in single pass
+                    const continents = noise.fbm(coord.x * continentScale, coord.y * continentScale, coord.z * continentScale, 3) * 0.7;
                     continentsLayer[idx] = Math.max(0, Math.min(1, continents + 0.5));
                     
-                    // 2. Island chains (~20 mile diameter)
-                    const islands = noise.fbm(
-                        coords.x * islandScale + 100, 
-                        coords.y * islandScale + 100, 
-                        coords.z * islandScale + 100, 
-                        4
-                    ) * 0.4;
+                    const islands = noise.fbm(coord.x * islandScale + 100, coord.y * islandScale + 100, coord.z * islandScale + 100, 4) * 0.4;
                     islandsLayer[idx] = Math.max(0, Math.min(1, islands + 0.5));
                     
-                    // 3. Mountain ranges (~40 mile width)
-                    const mountains = noise.fbm(
-                        coords.x * mountainScale + 200, 
-                        coords.y * mountainScale + 200, 
-                        coords.z * mountainScale + 200, 
-                        3
-                    ) * 0.5;
+                    const mountains = noise.fbm(coord.x * mountainScale + 200, coord.y * mountainScale + 200, coord.z * mountainScale + 200, 3) * 0.5;
                     mountainsLayer[idx] = Math.max(0, Math.min(1, mountains + 0.5));
                     
-                    // 4. River valleys and erosion (~4 mile width)
-                    const rivers = noise.fbm(
-                        coords.x * riverScale + 300, 
-                        coords.y * riverScale + 300, 
-                        coords.z * riverScale + 300, 
-                        2
-                    );
+                    const rivers = noise.fbm(coord.x * riverScale + 300, coord.y * riverScale + 300, coord.z * riverScale + 300, 2);
                     riversLayer[idx] = Math.max(0, Math.min(1, Math.abs(rivers)));
                     
-                    // 5. Hills and local terrain (~8 mile features)
-                    const hills = noise.fbm(
-                        coords.x * hillScale + 400, 
-                        coords.y * hillScale + 400, 
-                        coords.z * hillScale + 400, 
-                        4
-                    ) * 0.2;
+                    const hills = noise.fbm(coord.x * hillScale + 400, coord.y * hillScale + 400, coord.z * hillScale + 400, 4) * 0.2;
                     hillsLayer[idx] = Math.max(0, Math.min(1, hills + 0.5));
                     
-                    // 6. Fine surface details (~2 mile features)
-                    const details = noise.fbm(
-                        coords.x * detailScale + 500, 
-                        coords.y * detailScale + 500, 
-                        coords.z * detailScale + 500, 
-                        3
-                    ) * 0.1;
+                    const details = noise.fbm(coord.x * detailScale + 500, coord.y * detailScale + 500, coord.z * detailScale + 500, 3) * 0.1;
                     detailsLayer[idx] = Math.max(0, Math.min(1, details + 0.5));
                     
-                    // Tectonic activity
-                    const tectonicScale = milesPerSide / 60; // Tectonic features ~60 miles
-                    const tectonics = noise.fbm(
-                        coords.x * tectonicScale + 700, 
-                        coords.y * tectonicScale + 700, 
-                        coords.z * tectonicScale + 700, 
-                        2
-                    );
+                    const tectonics = noise.fbm(coord.x * tectonicScale + 700, coord.y * tectonicScale + 700, coord.z * tectonicScale + 700, 2);
                     tectonicsLayer[idx] = Math.max(0, Math.min(1, tectonics + 0.5));
                     
-                    // Combine terrain layers (increased mountain contribution)
+                    // Combine terrain layers
                     let height = continents * 0.35 + islands * 0.2 + mountains * 0.3 + hills * 0.1 + details * 0.05;
                     
-                    // River carving (creates river valleys ~4 miles wide)
+                    // River carving
                     if (height > 0.25 && milesPerSide >= 10) {
                         const riverCarving = Math.abs(rivers);
                         if (riverCarving < 0.1) {
-                            // Create river valley
                             const riverDepth = (0.1 - riverCarving) * 0.3;
                             height -= riverDepth;
                         }
                     }
                     
-                    // Enhanced mountain building (more aggressive peak creation)
+                    // Enhanced mountain building
                     if (tectonics > 0.5 && height > 0.25) {
-                        // Create mountain peaks - much more aggressive
-                        const mountainBoost = (tectonics - 0.5) * 1.5; // Increased from 0.8
+                        const mountainBoost = (tectonics - 0.5) * 1.5;
                         height += mountainBoost;
                     }
                     
-                    // Additional peak formation for very high tectonic activity
                     if (tectonics > 0.75 && height > 0.4) {
-                        const superPeaks = (tectonics - 0.75) * 2.0; // Extra boost for highest peaks
+                        const superPeaks = (tectonics - 0.75) * 2.0;
                         height += superPeaks;
                     }
                     
-                    // Mountain ridge enhancement (creates connected mountain ranges)
-                    const ridgeScale = milesPerSide / 30; // Ridge features ~30 miles
-                    const ridges = noise.fbm(
-                        coords.x * ridgeScale + 1100, 
-                        coords.y * ridgeScale + 1100, 
-                        coords.z * ridgeScale + 1100, 
-                        2
-                    );
-                    
+                    // Mountain ridge enhancement
+                    const ridges = noise.fbm(coord.x * ridgeScale + 1100, coord.y * ridgeScale + 1100, coord.z * ridgeScale + 1100, 2);
                     if (ridges > 0.6 && height > 0.5) {
-                        height += (ridges - 0.6) * 1.2; // Add ridge peaks
+                        height += (ridges - 0.6) * 1.2;
                     }
                     
-                    // Coastal erosion and beaches (only for maps with sufficient detail)
+                    // Coastal erosion and beaches
                     if (milesPerSide >= 20) {
-                        const coastalScale = milesPerSide / 6; // Coastal features ~6 miles
-                        const coastal = noise.fbm(
-                            coords.x * coastalScale + 800, 
-                            coords.y * coastalScale + 800, 
-                            coords.z * coastalScale + 800, 
-                            2
-                        ) * 0.05;
-                        
-                        // Add coastal variation
+                        const coastal = noise.fbm(coord.x * coastalScale + 800, coord.y * coastalScale + 800, coord.z * coastalScale + 800, 2) * 0.05;
                         if (height > 0.15 && height < 0.4) {
                             height += coastal;
                         }
                     }
                     
-                    // Ensure height is in valid range
                     height = Math.max(0, Math.min(1, height));
                     
-                    // Quantize height to 10 discrete levels (1-10)
-                    // 0.0-0.3 -> levels 1-3 (ocean depths)
-                    // 0.3-1.0 -> levels 4-10 (land elevations)
+                    // Quantize height to 10 discrete levels
                     let quantizedHeight;
                     if (height <= 0.3) {
-                        // Ocean: map 0-0.3 to levels 1-3
                         quantizedHeight = Math.floor((height / 0.3) * 3) + 1;
                         quantizedHeight = Math.max(1, Math.min(3, quantizedHeight));
                     } else {
-                        // Land: map 0.3-1.0 to levels 4-10
                         quantizedHeight = Math.floor(((height - 0.3) / 0.7) * 7) + 4;
                         quantizedHeight = Math.max(4, Math.min(10, quantizedHeight));
                         
-                        // Minimize large sand areas - convert level 4 to level 5 if not near water
+                        // Minimize large sand areas - optimized coastal check
                         if (quantizedHeight === 4) {
-                            // Check if this pixel is actually coastal (near lower elevation)
                             let nearWater = false;
-                            const checkRadius = Math.max(1, Math.floor(size / 100)); // Adaptive radius
                             
-                            for (let dy = -checkRadius; dy <= checkRadius && !nearWater; dy++) {
-                                for (let dx = -checkRadius; dx <= checkRadius && !nearWater; dx++) {
+                            // Efficient spiral search pattern
+                            for (let r = 1; r <= checkRadius && !nearWater; r++) {
+                                for (let angle = 0; angle < 8 && !nearWater; angle++) {
+                                    const dx = Math.round(r * Math.cos(angle * Math.PI / 4));
+                                    const dy = Math.round(r * Math.sin(angle * Math.PI / 4));
+                                    
                                     const checkX = Math.max(0, Math.min(size-1, x + dx));
                                     const checkY = Math.max(0, Math.min(size-1, y + dy));
-                                    const checkU = checkX / (size - 1);
-                                    const checkV = checkY / (size - 1);
-                                    const checkCoords = getCubeCoords(face, checkU, checkV);
                                     
-                                    // Sample height at nearby location
-                                    const checkContinents = noise.fbm(checkCoords.x * continentScale, checkCoords.y * continentScale, checkCoords.z * continentScale, 3) * 0.7;
-                                    const checkIslands = noise.fbm(checkCoords.x * islandScale + 100, checkCoords.y * islandScale + 100, checkCoords.z * islandScale + 100, 4) * 0.4;
-                                    const checkMountains = noise.fbm(checkCoords.x * mountainScale + 200, checkCoords.y * mountainScale + 200, checkCoords.z * mountainScale + 200, 3) * 0.5;
-                                    const checkHills = noise.fbm(checkCoords.x * hillScale + 400, checkCoords.y * hillScale + 400, checkCoords.z * hillScale + 400, 4) * 0.2;
-                                    const checkDetails = noise.fbm(checkCoords.x * detailScale + 500, checkCoords.y * detailScale + 500, checkCoords.z * detailScale + 500, 3) * 0.1;
-                                    
-                                    let checkHeight = checkContinents * 0.35 + checkIslands * 0.2 + checkMountains * 0.3 + checkHills * 0.1 + checkDetails * 0.05;
-                                    checkHeight = Math.max(0, Math.min(1, checkHeight));
-                                    
-                                    if (checkHeight <= 0.3) {
-                                        nearWater = true; // Found water nearby
+                                    if (checkX !== x || checkY !== y) {
+                                        const checkU = checkX / (size - 1);
+                                        const checkV = checkY / (size - 1);
+                                        const checkCoords = getCubeCoords(face, checkU, checkV);
+                                        
+                                        // Quick height estimation using fewer octaves
+                                        const checkContinents = noise.fbm(checkCoords.x * continentScale, checkCoords.y * continentScale, checkCoords.z * continentScale, 2) * 0.7;
+                                        const checkIslands = noise.fbm(checkCoords.x * islandScale + 100, checkCoords.y * islandScale + 100, checkCoords.z * islandScale + 100, 2) * 0.4;
+                                        
+                                        let checkHeight = checkContinents * 0.6 + checkIslands * 0.4;
+                                        checkHeight = Math.max(0, Math.min(1, checkHeight));
+                                        
+                                        if (checkHeight <= 0.3) {
+                                            nearWater = true;
+                                        }
                                     }
                                 }
                             }
                             
-                            // If not near water, convert sand to grassland
                             if (!nearWater) {
-                                quantizedHeight = 5; // Convert to lowlands/plains
+                                quantizedHeight = 5;
                             }
                         }
                     }
                     
-                    heightData[idx] = quantizedHeight / 10; // Store as 0.1-1.0 for compatibility
+                    heightData[idx] = quantizedHeight / 10;
                 }
             }
             
             // Post-process ocean for more dramatic depth variation
             enhanceOceanDepths(heightData, size);
             
-            // Generate biomes after ocean enhancement
-            for (let y = 0; y < size; y++) {
-                for (let x = 0; x < size; x++) {
-                    const u = x / (size - 1);
-                    const v = y / (size - 1);
-                    const coords = getCubeCoords(face, u, v);
-                    const idx = y * size + x;
-                    
-                    const finalHeight = Math.round(heightData[idx] * 10);
-                    
-                    // Generate climate for biome (use original continuous height for climate calc)
-                    let latitude = Math.abs(coords.y);
-                    let baseTemp = 1.0 - latitude * 0.8;
-                    const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
-                    const climateScale = milesPerSide / 100;
-                    const tempNoise = noise.fbm(coords.x * climateScale + 900, coords.y * climateScale + 900, coords.z * climateScale + 900, 3) * 0.3;
-                    const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
-                    
-                    const precipScale = milesPerSide / 80;
-                    const precipitation = noise.fbm(coords.x * precipScale + 1000, coords.y * precipScale + 1000, coords.z * precipScale + 1000, 3);
-                    const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
-                    const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
-                    
-                    const biome = getBiome(finalHeight, temperature, moisture);
-                    
-                    const biomeIdx = idx * 4;
-                    biomeData[biomeIdx] = biome[0];
-                    biomeData[biomeIdx + 1] = biome[1];
-                    biomeData[biomeIdx + 2] = biome[2];
-                    biomeData[biomeIdx + 3] = 255;
-                }
+            // Generate biomes in final pass
+            for (let i = 0; i < size * size; i++) {
+                const coord = coords[i];
+                const finalHeight = Math.round(heightData[i] * 10);
+                
+                // Generate climate for biome
+                let latitude = Math.abs(coord.y);
+                let baseTemp = 1.0 - latitude * 0.8;
+                const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
+                const tempNoise = noise.fbm(coord.x * climateScale + 900, coord.y * climateScale + 900, coord.z * climateScale + 900, 3) * 0.3;
+                const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
+                
+                const precipitation = noise.fbm(coord.x * precipScale + 1000, coord.y * precipScale + 1000, coord.z * precipScale + 1000, 3);
+                const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
+                const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
+                
+                const biome = getBiome(finalHeight, temperature, moisture);
+                
+                const biomeIdx = i * 4;
+                biomeData[biomeIdx] = biome[0];
+                biomeData[biomeIdx + 1] = biome[1];
+                biomeData[biomeIdx + 2] = biome[2];
+                biomeData[biomeIdx + 3] = 255;
             }
             
             // Store layers
