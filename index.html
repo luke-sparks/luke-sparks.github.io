@@ -38,8 +38,8 @@
                 <div></div><div class="face"><canvas id="bottom"></canvas></div><div></div><div></div>
             </div>
             <div style="font-size: 12px; margin-top: 10px; color: #666;">
-                Features: Scale-aware terrain generation where 1 pixel = 1 mile.<br>
-                Realistic geology with continental shelves, mountain ranges, river valleys, and climate-based biomes.<br>
+                Realistic scaling: Islands ~20mi, Continents ~80mi, Rivers ~4mi wide.<br>
+                Larger maps = more features (more space), smaller maps = fewer features (less space).<br>
                 Edge continuity is mathematically guaranteed and tested on generation.
             </div>
         </div>
@@ -272,12 +272,14 @@
             // Scale-aware terrain generation (1 pixel = 1 mile)
             const milesPerSide = size;
             
-            // Calculate realistic feature scales based on map size
-            const continentalScale = Math.max(0.3, 1000 / milesPerSide);     // Continental features: ~1000+ miles
-            const mountainScale = Math.max(1.0, 200 / milesPerSide);         // Mountain ranges: ~200 miles
-            const regionalScale = Math.max(2.0, 50 / milesPerSide);          // Regional hills: ~50 miles
-            const localScale = Math.max(5.0, 10 / milesPerSide);             // Local features: ~10 miles
-            const detailScale = Math.max(10.0, 2 / milesPerSide);            // Fine details: ~2 miles
+            // Calculate feature scales based on desired real-world sizes
+            // Larger maps will have MORE features, smaller maps will have FEWER features
+            const continentScale = milesPerSide / 80;    // Continents ~80 miles diameter
+            const islandScale = milesPerSide / 20;       // Islands ~20 miles diameter  
+            const mountainScale = milesPerSide / 40;     // Mountain ranges ~40 miles across
+            const riverScale = milesPerSide / 4;         // Rivers ~4 miles wide
+            const hillScale = milesPerSide / 8;          // Hills ~8 miles across
+            const detailScale = milesPerSide / 2;        // Fine details ~2 miles
             
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
@@ -288,91 +290,112 @@
                     const coords = getCubeCoords(face, u, v);
                     const idx = y * size + x;
                     
-                    // Multi-layer terrain generation scaled for realism
+                    // Multi-layer terrain generation with proper scaling
                     
-                    // 1. Continental shelf (major landmasses and ocean basins)
+                    // 1. Continental masses (~80 mile diameter)
                     const continents = noise.fbm(
-                        coords.x * continentalScale, 
-                        coords.y * continentalScale, 
-                        coords.z * continentalScale, 
+                        coords.x * continentScale, 
+                        coords.y * continentScale, 
+                        coords.z * continentScale, 
                         3
-                    ) * 0.8;
+                    ) * 0.7;
                     
-                    // 2. Mountain ranges and major valleys  
-                    const mountains = noise.fbm(
-                        coords.x * mountainScale + 100, 
-                        coords.y * mountainScale + 100, 
-                        coords.z * mountainScale + 100, 
+                    // 2. Island chains (~20 mile diameter)
+                    const islands = noise.fbm(
+                        coords.x * islandScale + 100, 
+                        coords.y * islandScale + 100, 
+                        coords.z * islandScale + 100, 
                         4
+                    ) * 0.4;
+                    
+                    // 3. Mountain ranges (~40 mile width)
+                    const mountains = noise.fbm(
+                        coords.x * mountainScale + 200, 
+                        coords.y * mountainScale + 200, 
+                        coords.z * mountainScale + 200, 
+                        3
                     ) * 0.5;
                     
-                    // 3. Regional terrain (hills, ridges, river valleys)
-                    const regional = noise.fbm(
-                        coords.x * regionalScale + 200, 
-                        coords.y * regionalScale + 200, 
-                        coords.z * regionalScale + 200, 
-                        5
-                    ) * 0.3;
-                    
-                    // 4. Local terrain (small hills, valleys)
-                    const local = noise.fbm(
-                        coords.x * localScale + 300, 
-                        coords.y * localScale + 300, 
-                        coords.z * localScale + 300, 
-                        4
-                    ) * 0.15;
-                    
-                    // 5. Fine details (small-scale roughness)
-                    const details = noise.fbm(
-                        coords.x * detailScale + 400, 
-                        coords.y * detailScale + 400, 
-                        coords.z * detailScale + 400, 
-                        3
-                    ) * 0.08;
-                    
-                    // Combine layers with appropriate weighting for the scale
-                    let height = continents * 0.5 + mountains * 0.25 + regional * 0.15 + local * 0.07 + details * 0.03;
-                    
-                    // Create realistic ocean basins (scale-appropriate)
-                    const oceanScale = Math.max(0.5, 800 / milesPerSide);
-                    const oceanMask = noise.fbm(
-                        coords.x * oceanScale + 500, 
-                        coords.y * oceanScale + 500, 
-                        coords.z * oceanScale + 500, 
+                    // 4. River valleys and erosion (~4 mile width)
+                    const rivers = noise.fbm(
+                        coords.x * riverScale + 300, 
+                        coords.y * riverScale + 300, 
+                        coords.z * riverScale + 300, 
                         2
                     );
                     
-                    if (oceanMask < 0.25) {
-                        height = Math.min(height, 0.05 + oceanMask * 0.15); // Deep ocean
-                    } else if (oceanMask < 0.35) {
-                        height = Math.min(height, 0.2); // Continental shelf
-                    }
+                    // 5. Hills and local terrain (~8 mile features)
+                    const hills = noise.fbm(
+                        coords.x * hillScale + 400, 
+                        coords.y * hillScale + 400, 
+                        coords.z * hillScale + 400, 
+                        4
+                    ) * 0.2;
                     
-                    // Tectonic activity (mountain building) - scale-appropriate
-                    const tectonicScale = Math.max(0.8, 400 / milesPerSide);
-                    const tectonics = noise.fbm(
-                        coords.x * tectonicScale + 1000, 
-                        coords.y * tectonicScale + 1000, 
-                        coords.z * tectonicScale + 1000, 
+                    // 6. Fine surface details (~2 mile features)
+                    const details = noise.fbm(
+                        coords.x * detailScale + 500, 
+                        coords.y * detailScale + 500, 
+                        coords.z * detailScale + 500, 
                         3
+                    ) * 0.1;
+                    
+                    // Combine terrain layers
+                    let height = continents * 0.4 + islands * 0.25 + mountains * 0.2 + hills * 0.1 + details * 0.05;
+                    
+                    // Create ocean basins (ensures we have water between landmasses)
+                    const oceanScale = milesPerSide / 120; // Ocean basins ~120 miles across
+                    const oceanMask = noise.fbm(
+                        coords.x * oceanScale + 600, 
+                        coords.y * oceanScale + 600, 
+                        coords.z * oceanScale + 600, 
+                        2
                     );
                     
-                    if (tectonics > 0.6 && height > 0.25) {
-                        // Create mountain peaks - higher for larger scales
-                        const mountainHeight = milesPerSide > 200 ? 0.9 : 0.7;
+                    // More aggressive ocean creation for smaller maps
+                    const oceanThreshold = milesPerSide < 100 ? 0.4 : 0.3;
+                    if (oceanMask < oceanThreshold) {
+                        height = Math.min(height, 0.1 + oceanMask * 0.1); // Deep ocean
+                    }
+                    
+                    // River carving (creates river valleys ~4 miles wide)
+                    if (height > 0.25 && milesPerSide >= 10) {
+                        const riverCarving = Math.abs(rivers);
+                        if (riverCarving < 0.1) {
+                            // Create river valley
+                            const riverDepth = (0.1 - riverCarving) * 0.3;
+                            height -= riverDepth;
+                        }
+                    }
+                    
+                    // Mountain building (tectonic activity)
+                    const tectonicScale = milesPerSide / 60; // Tectonic features ~60 miles
+                    const tectonics = noise.fbm(
+                        coords.x * tectonicScale + 700, 
+                        coords.y * tectonicScale + 700, 
+                        coords.z * tectonicScale + 700, 
+                        2
+                    );
+                    
+                    if (tectonics > 0.6 && height > 0.3) {
+                        // Mountain peaks - scale with map size for realism
+                        const mountainHeight = 0.8;
                         height += (tectonics - 0.6) * mountainHeight;
                     }
                     
-                    // Erosion effects (more pronounced on smaller scales where detail matters)
-                    if (milesPerSide < 100) {
-                        const erosion = noise.fbm(
-                            coords.x * (localScale * 2) + 600, 
-                            coords.y * (localScale * 2) + 600, 
-                            coords.z * (localScale * 2) + 600, 
+                    // Coastal erosion and beaches (only for maps with sufficient detail)
+                    if (milesPerSide >= 20) {
+                        const coastalScale = milesPerSide / 6; // Coastal features ~6 miles
+                        const coastal = noise.fbm(
+                            coords.x * coastalScale + 800, 
+                            coords.y * coastalScale + 800, 
+                            coords.z * coastalScale + 800, 
                             2
-                        ) * 0.1;
-                        if (height > 0.4) {
-                            height -= erosion * (height - 0.4) * 0.3; // River valleys and erosion
+                        ) * 0.05;
+                        
+                        // Add coastal variation
+                        if (height > 0.15 && height < 0.4) {
+                            height += coastal;
                         }
                     }
                     
@@ -380,39 +403,38 @@
                     height = Math.max(0, Math.min(1, height));
                     heightData[idx] = height;
                     
-                    // Climate generation scaled for the map size
+                    // Climate generation appropriate for scale
                     
                     // Latitude-based temperature (poles are colder)
                     let latitude = Math.abs(coords.y);
                     let baseTemp = 1.0 - latitude * 0.8;
                     
                     // Elevation cooling (mountains are colder)
-                    const elevationCooling = Math.max(0, height - 0.3) * 1.2;
+                    const elevationCooling = Math.max(0, height - 0.3) * 1.0;
                     
-                    // Climate variation - scale-appropriate
-                    const climateScale = Math.max(1.5, 300 / milesPerSide);
+                    // Climate variation
+                    const climateScale = milesPerSide / 100; // Climate zones ~100 miles
                     const tempNoise = noise.fbm(
-                        coords.x * climateScale + 2000, 
-                        coords.y * climateScale + 2000, 
-                        coords.z * climateScale + 2000, 
+                        coords.x * climateScale + 900, 
+                        coords.y * climateScale + 900, 
+                        coords.z * climateScale + 900, 
                         3
                     ) * 0.3;
                     
                     const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
                     
-                    // Precipitation patterns - affected by scale and ocean proximity
-                    const precipScale = Math.max(1.2, 250 / milesPerSide);
+                    // Precipitation patterns
+                    const precipScale = milesPerSide / 80; // Weather systems ~80 miles
                     const precipitation = noise.fbm(
-                        coords.x * precipScale + 3000, 
-                        coords.y * precipScale + 3000, 
-                        coords.z * precipScale + 3000, 
-                        4
+                        coords.x * precipScale + 1000, 
+                        coords.y * precipScale + 1000, 
+                        coords.z * precipScale + 1000, 
+                        3
                     );
                     
-                    // Ocean effect on moisture (stronger on smaller scales)
-                    const oceanInfluence = Math.max(0, 0.6 - Math.max(0, height - 0.2) * 2);
-                    const scaleInfluence = milesPerSide < 100 ? 0.4 : 0.2; // Coastal effects more pronounced at smaller scales
-                    const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * scaleInfluence));
+                    // Ocean effect on moisture
+                    const oceanInfluence = Math.max(0, 0.5 - Math.max(0, height - 0.2) * 2);
+                    const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
                     
                     const biome = getBiome(height, temperature, moisture);
                     
@@ -514,8 +536,8 @@
             
             // Validate size input - allow any positive integer
             if (isNaN(size) || size < 1) {
-                size = 128;
-                document.getElementById('size').value = 128;
+                size = 64;
+                document.getElementById('size').value = 64;
             }
             
             const seedInput = document.getElementById('seed').value.trim();
@@ -544,14 +566,14 @@
                 render(canvas, data.heightData, data.biomeData, size, currentView);
             });
             
-            // Log scale information
-            console.log(`Generated terrain features:`);
-            console.log(`- Total area: ${size}x${size} square miles`);
-            console.log(`- Continental features: ~${Math.min(1000, size)} mile scale`);
-            console.log(`- Mountain ranges: ~${Math.min(200, size)} mile scale`);
-            console.log(`- Regional hills: ~${Math.min(50, size)} mile scale`);
-            if (size >= 10) console.log(`- Local features: ~${Math.min(10, size)} mile scale`);
-            if (size >= 2) console.log(`- Fine details: ~${Math.min(2, size)} mile scale`);
+            // Log scale information with expected feature counts
+            console.log(`Generated terrain features for ${size}x${size} square miles:`);
+            console.log(`- Expected continents: ~${Math.floor(size/80)} (80 miles each)`);
+            console.log(`- Expected islands: ~${Math.floor(size/20)} (20 miles each)`);
+            console.log(`- Expected mountain ranges: ~${Math.floor(size/40)} (40 miles each)`);
+            if (size >= 10) console.log(`- Rivers: ~4 miles wide`);
+            if (size >= 20) console.log(`- Coastal features: ~6 mile detail`);
+            console.log(`- Climate zones: ~100 mile scale`);
         }
 
         function switchView() {
@@ -579,8 +601,8 @@
             });
         }
 
-        // Generate initial map with test seed to verify edge continuity
-        document.getElementById('size').value = '64';
+        // Generate initial map with test seed to verify edge continuity  
+        document.getElementById('size').value = '80';
         document.getElementById('seed').value = 'test123';
         generate();
     </script>
