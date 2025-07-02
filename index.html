@@ -344,19 +344,19 @@
                     let height = continents * 0.4 + islands * 0.25 + mountains * 0.2 + hills * 0.1 + details * 0.05;
                     
                     // Create ocean basins (ensures we have water between landmasses)
-                    const oceanScale = milesPerSide / 120; // Ocean basins ~120 miles across
-                    const oceanMask = noise.fbm(
-                        coords.x * oceanScale + 600, 
-                        coords.y * oceanScale + 600, 
-                        coords.z * oceanScale + 600, 
-                        2
-                    );
+                    // const oceanScale = milesPerSide / 120; // Ocean basins ~120 miles across
+                    // const oceanMask = noise.fbm(
+                    //     coords.x * oceanScale + 600, 
+                    //     coords.y * oceanScale + 600, 
+                    //     coords.z * oceanScale + 600, 
+                    //     2
+                    // );
                     
-                    // More aggressive ocean creation for smaller maps
-                    const oceanThreshold = milesPerSide < 100 ? 0.4 : 0.3;
-                    if (oceanMask < oceanThreshold) {
-                        height = Math.min(height, 0.1 + oceanMask * 0.1); // Deep ocean
-                    }
+                    // // More aggressive ocean creation for smaller maps
+                    // const oceanThreshold = milesPerSide < 100 ? 0.4 : 0.3;
+                    // if (oceanMask < oceanThreshold) {
+                    //     height = Math.min(height, 0.1 + oceanMask * 0.1); // Deep ocean
+                    // }
                     
                     // River carving (creates river valleys ~4 miles wide)
                     if (height > 0.25 && milesPerSide >= 10) {
