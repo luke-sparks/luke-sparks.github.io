@@ -24,7 +24,6 @@
         <button onclick="randomSeed()">Random Seed</button>
         <button onclick="generate()">Generate</button>
         <button onclick="switchView()">Toggle View</button>
-        <button onclick="toggleLayers()">Show Layers</button>
         <button onclick="downloadAll()">Download All</button>
         <button onclick="downloadCubeNet()">Download Cube Net</button>
         <span id="viewLabel">(Heightmap)</span>
@@ -48,55 +47,10 @@
         </div>
     </div>
 
-    <div id="layersSection" style="display: none; margin-top: 30px;">
-        <h4>Terrain Generation Layers (Front Face)</h4>
-        <div style="display: grid; grid-template-columns: repeat(4, 150px); gap: 15px; margin-top: 15px;">
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">continents</div>
-                <canvas id="layer-continents" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~80 mile diameter</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">islands</div>
-                <canvas id="layer-islands" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~20 mile diameter</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">mountains</div>
-                <canvas id="layer-mountains" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~40 mile width</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">rivers</div>
-                <canvas id="layer-rivers" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~4 mile width</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">hills</div>
-                <canvas id="layer-hills" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~8 mile features</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">details</div>
-                <canvas id="layer-details" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~2 mile features</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">tectonics</div>
-                <canvas id="layer-tectonics" width="120" height="120" style="border: 1px solid #999;"></canvas>
-                <div style="font-size: 10px; color: #666; margin-top: 2px;">~60 mile features</div>
-            </div>
-        </div>
-        <div style="margin-top: 15px; font-size: 12px; color: #666;">
-            Each layer contributes to final terrain. Heightmap uses remapped values: Ocean(0), Beach(1), Lowlands(2), Hills(3), Highlands(5), Mountains(8), High peaks(11), Snow caps(15).
-        </div>
-    </div>
-
     <script>
         let currentView = 'heightmap';
         let currentData = null;
         let currentLayers = null;
-        let layersVisible = false;
 
         class Noise {
             constructor(seed) {
@@ -555,50 +509,6 @@
             ctx.putImageData(imageData, 0, 0);
         }
 
-        function toggleLayers() {
-            layersVisible = !layersVisible;
-            const layersSection = document.getElementById('layersSection');
-            
-            if (layersVisible) {
-                layersSection.style.display = 'block';
-                if (currentLayers) {
-                    renderLayers(currentLayers);
-                }
-            } else {
-                layersSection.style.display = 'none';
-            }
-        }
-
-        function renderLayers(layers) {
-            const layerNames = ['continents', 'islands', 'mountains', 'rivers', 'hills', 'details', 'tectonics'];
-            
-            layerNames.forEach(layerName => {
-                const canvas = document.getElementById(`layer-${layerName}`);
-                const layerData = layers[layerName];
-                
-                if (canvas && layerData) {
-                    const size = Math.sqrt(layerData.length);
-                    canvas.width = size;
-                    canvas.height = size;
-                    
-                    const ctx = canvas.getContext('2d');
-                    const imageData = ctx.createImageData(size, size);
-                    const data = imageData.data;
-                    
-                    // Render as grayscale
-                    for (let i = 0; i < layerData.length; i++) {
-                        const val = Math.floor(layerData[i] * 255);
-                        data[i * 4] = val;
-                        data[i * 4 + 1] = val;
-                        data[i * 4 + 2] = val;
-                        data[i * 4 + 3] = 255;
-                    }
-                    
-                    ctx.putImageData(imageData, 0, 0);
-                }
-            });
-        }
-
         function randomSeed() {
             const seed = Math.random().toString(36).substr(2, 9);
             document.getElementById('seed').value = seed;
@@ -700,11 +610,6 @@
                     currentLayers = data.layers;
                 }
             });
-            
-            // Update layer display if visible
-            if (layersVisible && currentLayers) {
-                renderLayers(currentLayers);
-            }
             
             // Log scale information with expected feature counts
             console.log(`Generated enhanced terrain for ${size}x${size} square miles:`);
