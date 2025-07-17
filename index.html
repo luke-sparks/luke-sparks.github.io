@@ -39,7 +39,9 @@
                 <div></div><div class="face"><canvas id="bottom"></canvas></div><div></div><div></div>
             </div>
             <div style="font-size: 12px; margin-top: 10px; color: #666;">
-                Realistic scaling: Islands ~20mi, Continents ~80mi, Rivers ~4mi wide.<br>
+                Realistic scaling: Islands ~20mi, Continents ~80mi, Rivers ~4mi wide, Lakes ~15mi scale.<br>
+                Enhanced water system: Cross-face lake detection (&lt;10% total size). Lakes use special heightmap (4→0, 5→1, 6→2, 7→4, 8→7, 9→10, 10→14).<br>
+                Lake adjustment: Lakes set to same height as lowest 4-connected shore, appear lower due to heightmap mapping.<br>
                 Enhanced oceans: Deep ocean (10%+ coverage), shallows extend 2-15mi from shore, dramatic depth variation.<br>
                 Heightmap values: Ocean(0), Beach(1), Lowlands(2), Hills(3), Highlands(5), Mountains(8), High peaks(11), Snow caps(15).<br>
                 Edge continuity is mathematically guaranteed and tested on generation.
@@ -153,28 +155,24 @@
             return { x: x/len, y: y/len, z: z/len };
         }
 
-        function enhanceOceanDepths(heightData, size) {
-            // Optimized ocean depth enhancement
+        function enhanceOceanDepths(waterData, isWater, size) {
+            // Optimized ocean depth enhancement for separated water data
             const shallowMinRange = 2;
             const shallowMaxRange = 15;
             const searchRadius = Math.min(shallowMaxRange + 5, size / 4);
             
             // Create distance map using efficient flood-fill algorithm
             const distanceMap = new Float32Array(size * size);
-            const oceanMask = new Uint8Array(size * size);
             const queue = [];
             
-            // Initialize ocean mask and find land pixels
+            // Initialize distance map and find land pixels
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
                     const idx = y * size + x;
-                    const height = Math.round(heightData[idx] * 10);
                     
-                    if (height <= 3) {
-                        oceanMask[idx] = 1;
+                    if (isWater[idx]) {
                         distanceMap[idx] = Infinity;
                     } else {
-                        oceanMask[idx] = 0;
                         distanceMap[idx] = 0;
                         queue.push({x, y, dist: 0});
                     }
@@ -200,7 +198,7 @@
                             const nIdx = ny * size + nx;
                             const newDist = dist + Math.sqrt(dx * dx + dy * dy);
                             
-                            if (oceanMask[nIdx] && newDist < distanceMap[nIdx]) {
+                            if (isWater[nIdx] && newDist < distanceMap[nIdx]) {
                                 distanceMap[nIdx] = newDist;
                                 if (newDist <= searchRadius) {
                                     queue.push({x: nx, y: ny, dist: newDist});
@@ -216,7 +214,7 @@
             let mediumOceanIndices = [];
             
             for (let i = 0; i < size * size; i++) {
-                if (oceanMask[i]) {
+                if (isWater[i]) {
                     const distance = distanceMap[i];
                     let depthLevel;
                     
@@ -229,7 +227,7 @@
                         depthLevel = 1;
                     }
                     
-                    heightData[i] = depthLevel / 10;
+                    waterData[i] = depthLevel;
                     
                     if (depthLevel === 1) {
                         deepOceanCount++;
@@ -240,13 +238,255 @@
             }
             
             // Ensure at least 10% deep ocean
-            const totalOcean = queue.length > 0 ? size * size - queue.length + (size * size - queuePos) : 0;
-            const requiredDeepOcean = Math.ceil(totalOcean * 0.1);
+            const totalWater = size * size - queue.length;
+            const requiredDeepOcean = Math.ceil(totalWater * 0.1);
             
             if (deepOceanCount < requiredDeepOcean && mediumOceanIndices.length > 0) {
                 const toConvert = Math.min(requiredDeepOcean - deepOceanCount, mediumOceanIndices.length);
                 for (let i = 0; i < toConvert; i++) {
-                    heightData[mediumOceanIndices[i]] = 1 / 10;
+                    waterData[mediumOceanIndices[i]] = 1;
+                }
+            }
+        }
+
+        function getCubeFaceAdjacency() {
+            // Define how cube faces connect to each other
+            // Each edge is defined as [face, edge] where edge is 0=top, 1=right, 2=bottom, 3=left
+            return {
+                'front': {
+                    top: ['top', 2],      // Front top -> Top bottom
+                    right: ['right', 3],  // Front right -> Right left  
+                    bottom: ['bottom', 0], // Front bottom -> Bottom top
+                    left: ['left', 1]     // Front left -> Left right
+                },
+                'back': {
+                    top: ['top', 0],      // Back top -> Top top
+                    right: ['left', 3],   // Back right -> Left left
+                    bottom: ['bottom', 2], // Back bottom -> Bottom bottom  
+                    left: ['right', 1]    // Back left -> Right right
+                },
+                'right': {
+                    top: ['top', 1],      // Right top -> Top right
+                    right: ['back', 3],   // Right right -> Back left
+                    bottom: ['bottom', 1], // Right bottom -> Bottom right
+                    left: ['front', 1]    // Right left -> Front right
+                },
+                'left': {
+                    top: ['top', 3],      // Left top -> Top left
+                    right: ['front', 3],  // Left right -> Front left
+                    bottom: ['bottom', 3], // Left bottom -> Bottom left
+                    left: ['back', 1]     // Left left -> Back right
+                },
+                'top': {
+                    top: ['back', 0],     // Top top -> Back top
+                    right: ['right', 0],  // Top right -> Right top
+                    bottom: ['front', 0], // Top bottom -> Front top
+                    left: ['left', 0]     // Top left -> Left top
+                },
+                'bottom': {
+                    top: ['front', 2],    // Bottom top -> Front bottom
+                    right: ['right', 2],  // Bottom right -> Right bottom
+                    bottom: ['back', 2],  // Bottom bottom -> Back bottom
+                    left: ['left', 2]     // Bottom left -> Left bottom
+                }
+            };
+        }
+
+        function getEdgePixels(size, edge) {
+            // Get pixel coordinates for each edge of a face
+            const pixels = [];
+            switch(edge) {
+                case 0: // top edge
+                    for (let x = 0; x < size; x++) pixels.push({x, y: 0});
+                    break;
+                case 1: // right edge  
+                    for (let y = 0; y < size; y++) pixels.push({x: size-1, y});
+                    break;
+                case 2: // bottom edge
+                    for (let x = 0; x < size; x++) pixels.push({x, y: size-1});
+                    break;
+                case 3: // left edge
+                    for (let y = 0; y < size; y++) pixels.push({x: 0, y});
+                    break;
+            }
+            return pixels;
+        }
+
+        function adjustLakeHeights(allFaceData, size) {
+            const adjacency = getCubeFaceAdjacency();
+            const maxLakeSize = Math.max(20, size * size * 0.1);
+            const globalVisited = {};
+            const waterBodies = [];
+            
+            // Initialize global visited tracking
+            Object.keys(allFaceData).forEach(face => {
+                globalVisited[face] = new Uint8Array(size * size);
+            });
+            
+            // Find all connected water bodies across faces
+            for (const startFace of Object.keys(allFaceData)) {
+                const { isWater } = allFaceData[startFace];
+                
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const idx = y * size + x;
+                        
+                        if (isWater[idx] && !globalVisited[startFace][idx]) {
+                            const waterBody = [];
+                            const queue = [{face: startFace, x, y}];
+                            
+                            // Cross-face flood fill
+                            while (queue.length > 0) {
+                                const {face, x: cx, y: cy} = queue.shift();
+                                const cidx = cy * size + cx;
+                                
+                                if (globalVisited[face][cidx]) continue;
+                                globalVisited[face][cidx] = 1;
+                                waterBody.push({face, x: cx, y: cy, idx: cidx});
+                                
+                                const faceData = allFaceData[face];
+                                
+                                // Check neighbors within same face
+                                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                                    const nx = cx + dx;
+                                    const ny = cy + dy;
+                                    
+                                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                                        const nidx = ny * size + nx;
+                                        if (faceData.isWater[nidx] && !globalVisited[face][nidx]) {
+                                            queue.push({face, x: nx, y: ny});
+                                        }
+                                    } else {
+                                        // Check cross-face connections
+                                        let adjacentFace = null;
+                                        let adjacentX = -1, adjacentY = -1;
+                                        
+                                        if (nx < 0 && adjacency[face].left) {
+                                            const [adjFace, adjEdge] = adjacency[face].left;
+                                            const adjPixels = getEdgePixels(size, adjEdge);
+                                            if (cy < adjPixels.length) {
+                                                adjacentFace = adjFace;
+                                                adjacentX = adjPixels[cy].x;
+                                                adjacentY = adjPixels[cy].y;
+                                            }
+                                        } else if (nx >= size && adjacency[face].right) {
+                                            const [adjFace, adjEdge] = adjacency[face].right;
+                                            const adjPixels = getEdgePixels(size, adjEdge);
+                                            if (cy < adjPixels.length) {
+                                                adjacentFace = adjFace;
+                                                adjacentX = adjPixels[cy].x;
+                                                adjacentY = adjPixels[cy].y;
+                                            }
+                                        } else if (ny < 0 && adjacency[face].top) {
+                                            const [adjFace, adjEdge] = adjacency[face].top;
+                                            const adjPixels = getEdgePixels(size, adjEdge);
+                                            if (cx < adjPixels.length) {
+                                                adjacentFace = adjFace;
+                                                adjacentX = adjPixels[cx].x;
+                                                adjacentY = adjPixels[cx].y;
+                                            }
+                                        } else if (ny >= size && adjacency[face].bottom) {
+                                            const [adjFace, adjEdge] = adjacency[face].bottom;
+                                            const adjPixels = getEdgePixels(size, adjEdge);
+                                            if (cx < adjPixels.length) {
+                                                adjacentFace = adjFace;
+                                                adjacentX = adjPixels[cx].x;
+                                                adjacentY = adjPixels[cx].y;
+                                            }
+                                        }
+                                        
+                                        if (adjacentFace && allFaceData[adjacentFace]) {
+                                            const adjIdx = adjacentY * size + adjacentX;
+                                            if (allFaceData[adjacentFace].isWater[adjIdx] && !globalVisited[adjacentFace][adjIdx]) {
+                                                queue.push({face: adjacentFace, x: adjacentX, y: adjacentY});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            const isLake = waterBody.length <= maxLakeSize;
+                            waterBodies.push({waterBody, isLake});
+                        }
+                    }
+                }
+            }
+            
+            // Adjust lake heights
+            for (const {waterBody, isLake} of waterBodies) {
+                if (!isLake) continue;
+                
+                let minSurroundingHeight = 11;
+                
+                // Find minimum surrounding land height across all faces (4-connected only)
+                for (const {face, x, y} of waterBody) {
+                    const faceData = allFaceData[face];
+                    
+                    // Check only 4-connected neighbors (cardinal directions) for shore
+                    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        
+                        // Handle within-face neighbors
+                        if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                            const nidx = ny * size + nx;
+                            if (!faceData.isWater[nidx]) {
+                                minSurroundingHeight = Math.min(minSurroundingHeight, faceData.landData[nidx]);
+                            }
+                        } else {
+                            // Handle cross-face neighbors (4-connected only)
+                            let adjacentFace = null;
+                            let adjacentX = -1, adjacentY = -1;
+                            
+                            if (nx < 0 && adjacency[face].left) {
+                                const [adjFace, adjEdge] = adjacency[face].left;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (y < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[y].x;
+                                    adjacentY = adjPixels[y].y;
+                                }
+                            } else if (nx >= size && adjacency[face].right) {
+                                const [adjFace, adjEdge] = adjacency[face].right;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (y < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[y].x;
+                                    adjacentY = adjPixels[y].y;
+                                }
+                            } else if (ny < 0 && adjacency[face].top) {
+                                const [adjFace, adjEdge] = adjacency[face].top;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (x < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[x].x;
+                                    adjacentY = adjPixels[x].y;
+                                }
+                            } else if (ny >= size && adjacency[face].bottom) {
+                                const [adjFace, adjEdge] = adjacency[face].bottom;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (x < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[x].x;
+                                    adjacentY = adjPixels[x].y;
+                                }
+                            }
+                            
+                            if (adjacentFace && allFaceData[adjacentFace]) {
+                                const adjIdx = adjacentY * size + adjacentX;
+                                if (!allFaceData[adjacentFace].isWater[adjIdx]) {
+                                    minSurroundingHeight = Math.min(minSurroundingHeight, allFaceData[adjacentFace].landData[adjIdx]);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (minSurroundingHeight < 11) {
+                    const lakeHeight = Math.max(4, minSurroundingHeight);
+                    for (const {face, idx} of waterBody) {
+                        allFaceData[face].waterData[idx] = lakeHeight;
+                    }
                 }
             }
         }
@@ -277,6 +517,11 @@
             const heightData = new Float32Array(size * size);
             const biomeData = new Uint8ClampedArray(size * size * 4);
             
+            // Separate water and land data
+            const waterData = new Float32Array(size * size);
+            const landData = new Float32Array(size * size);
+            const isWater = new Uint8Array(size * size);
+            
             // Store individual layers for debugging/visualization
             const layers = {};
             
@@ -295,6 +540,7 @@
             const coastalScale = milesPerSide / 6;
             const climateScale = milesPerSide / 100;
             const precipScale = milesPerSide / 80;
+            const lakeScale = milesPerSide / 15;
             
             // Pre-allocate all layers
             const continentsLayer = new Float32Array(size * size);
@@ -304,6 +550,7 @@
             const hillsLayer = new Float32Array(size * size);
             const detailsLayer = new Float32Array(size * size);
             const tectonicsLayer = new Float32Array(size * size);
+            const lakesLayer = new Float32Array(size * size);
             
             // Pre-calculate coordinates and noise in single pass
             const coords = new Array(size * size);
@@ -341,52 +588,64 @@
                     const tectonics = noise.fbm(coord.x * tectonicScale + 700, coord.y * tectonicScale + 700, coord.z * tectonicScale + 700, 2);
                     tectonicsLayer[idx] = Math.max(0, Math.min(1, tectonics + 0.5));
                     
-                    // Combine terrain layers
-                    let height = continents * 0.35 + islands * 0.2 + mountains * 0.3 + hills * 0.1 + details * 0.05;
+                    const lakes = noise.fbm(coord.x * lakeScale + 600, coord.y * lakeScale + 600, coord.z * lakeScale + 600, 3);
+                    lakesLayer[idx] = Math.max(0, Math.min(1, lakes + 0.5));
                     
-                    // River carving
-                    if (height > 0.25 && milesPerSide >= 10) {
-                        const riverCarving = Math.abs(rivers);
-                        if (riverCarving < 0.1) {
-                            const riverDepth = (0.1 - riverCarving) * 0.3;
-                            height -= riverDepth;
-                        }
-                    }
+                    // Generate land height first
+                    let landHeight = continents * 0.35 + islands * 0.2 + mountains * 0.3 + hills * 0.1 + details * 0.05;
                     
-                    // Enhanced mountain building
-                    if (tectonics > 0.5 && height > 0.25) {
+                    // Enhanced mountain building for land
+                    if (tectonics > 0.5 && landHeight > 0.25) {
                         const mountainBoost = (tectonics - 0.5) * 1.5;
-                        height += mountainBoost;
+                        landHeight += mountainBoost;
                     }
                     
-                    if (tectonics > 0.75 && height > 0.4) {
+                    if (tectonics > 0.75 && landHeight > 0.4) {
                         const superPeaks = (tectonics - 0.75) * 2.0;
-                        height += superPeaks;
+                        landHeight += superPeaks;
                     }
                     
                     // Mountain ridge enhancement
                     const ridges = noise.fbm(coord.x * ridgeScale + 1100, coord.y * ridgeScale + 1100, coord.z * ridgeScale + 1100, 2);
-                    if (ridges > 0.6 && height > 0.5) {
-                        height += (ridges - 0.6) * 1.2;
+                    if (ridges > 0.6 && landHeight > 0.5) {
+                        landHeight += (ridges - 0.6) * 1.2;
                     }
                     
                     // Coastal erosion and beaches
                     if (milesPerSide >= 20) {
                         const coastal = noise.fbm(coord.x * coastalScale + 800, coord.y * coastalScale + 800, coord.z * coastalScale + 800, 2) * 0.05;
-                        if (height > 0.15 && height < 0.4) {
-                            height += coastal;
+                        if (landHeight > 0.15 && landHeight < 0.4) {
+                            landHeight += coastal;
                         }
                     }
                     
-                    height = Math.max(0, Math.min(1, height));
+                    landHeight = Math.max(0, Math.min(1, landHeight));
                     
-                    // Quantize height to 10 discrete levels
-                    let quantizedHeight;
-                    if (height <= 0.3) {
-                        quantizedHeight = Math.floor((height / 0.3) * 3) + 1;
-                        quantizedHeight = Math.max(1, Math.min(3, quantizedHeight));
+                    // Determine if this is water or land
+                    let isWaterPixel = landHeight <= 0.3;
+                    
+                    // Add lake generation for enclosed areas
+                    if (!isWaterPixel && landHeight > 0.4 && lakes > 0.7) {
+                        isWaterPixel = true;
+                    }
+                    
+                    // River carving (creates water)
+                    if (!isWaterPixel && landHeight > 0.25 && milesPerSide >= 10) {
+                        const riverCarving = Math.abs(rivers);
+                        if (riverCarving < 0.1) {
+                            isWaterPixel = true;
+                        }
+                    }
+                    
+                    isWater[idx] = isWaterPixel ? 1 : 0;
+                    
+                    if (isWaterPixel) {
+                        // Generate water depths (will be adjusted later for lakes)
+                        waterData[idx] = landHeight <= 0.1 ? 1 : (landHeight <= 0.2 ? 2 : 3);
+                        landData[idx] = 0;
                     } else {
-                        quantizedHeight = Math.floor(((height - 0.3) / 0.7) * 7) + 4;
+                        // Quantize land height to discrete levels (4-10)
+                        let quantizedHeight = Math.floor(((landHeight - 0.3) / 0.7) * 7) + 4;
                         quantizedHeight = Math.max(4, Math.min(10, quantizedHeight));
                         
                         // Minimize large sand areas - optimized coastal check
@@ -425,38 +684,73 @@
                                 quantizedHeight = 5;
                             }
                         }
+                        
+                        waterData[idx] = 0;
+                        landData[idx] = quantizedHeight;
                     }
-                    
-                    heightData[idx] = quantizedHeight / 10;
                 }
             }
             
             // Post-process ocean for more dramatic depth variation
-            enhanceOceanDepths(heightData, size);
+            enhanceOceanDepths(waterData, isWater, size);
+            
+            // Note: Lake adjustment is now done as a separate pass after all faces are generated
+            
+            // Combine water and land data into final height data
+            for (let i = 0; i < size * size; i++) {
+                if (isWater[i]) {
+                    heightData[i] = waterData[i] / 10;
+                } else {
+                    heightData[i] = landData[i] / 10;
+                }
+            }
             
             // Generate biomes in final pass
             for (let i = 0; i < size * size; i++) {
                 const coord = coords[i];
                 const finalHeight = Math.round(heightData[i] * 10);
                 
-                // Generate climate for biome
-                let latitude = Math.abs(coord.y);
-                let baseTemp = 1.0 - latitude * 0.8;
-                const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
-                const tempNoise = noise.fbm(coord.x * climateScale + 900, coord.y * climateScale + 900, coord.z * climateScale + 900, 3) * 0.3;
-                const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
-                
-                const precipitation = noise.fbm(coord.x * precipScale + 1000, coord.y * precipScale + 1000, coord.z * precipScale + 1000, 3);
-                const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
-                const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
-                
-                const biome = getBiome(finalHeight, temperature, moisture);
-                
-                const biomeIdx = i * 4;
-                biomeData[biomeIdx] = biome[0];
-                biomeData[biomeIdx + 1] = biome[1];
-                biomeData[biomeIdx + 2] = biome[2];
-                biomeData[biomeIdx + 3] = 255;
+                // Use isWater array to determine biome type, not just height
+                if (isWater[i]) {
+                    // Water biome - always use water colors (1-3) regardless of actual height
+                    const actualWaterHeight = Math.round(waterData[i]);
+                    let waterColorLevel;
+                    
+                    // Map water heights to water color levels (1-3 only)
+                    if (actualWaterHeight <= 3) {
+                        waterColorLevel = actualWaterHeight; // Use as-is for ocean depths
+                    } else {
+                        // For lakes at higher elevations, use shallow water color
+                        waterColorLevel = 3;
+                    }
+                    
+                    const biome = getBiome(waterColorLevel, 0, 1);
+                    
+                    const biomeIdx = i * 4;
+                    biomeData[biomeIdx] = biome[0];
+                    biomeData[biomeIdx + 1] = biome[1];
+                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx + 3] = 255;
+                } else {
+                    // Land biome - generate climate for land
+                    let latitude = Math.abs(coord.y);
+                    let baseTemp = 1.0 - latitude * 0.8;
+                    const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
+                    const tempNoise = noise.fbm(coord.x * climateScale + 900, coord.y * climateScale + 900, coord.z * climateScale + 900, 3) * 0.3;
+                    const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
+                    
+                    const precipitation = noise.fbm(coord.x * precipScale + 1000, coord.y * precipScale + 1000, coord.z * precipScale + 1000, 3);
+                    const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
+                    const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
+                    
+                    const biome = getBiome(finalHeight, temperature, moisture);
+                    
+                    const biomeIdx = i * 4;
+                    biomeData[biomeIdx] = biome[0];
+                    biomeData[biomeIdx + 1] = biome[1];
+                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx + 3] = 255;
+                }
             }
             
             // Store layers
@@ -467,11 +761,15 @@
             layers.hills = hillsLayer;
             layers.details = detailsLayer;
             layers.tectonics = tectonicsLayer;
+            layers.lakes = lakesLayer;
+            layers.water = waterData;
+            layers.land = landData;
+            layers.isWater = isWater;
             
             return { heightData, biomeData, layers };
         }
 
-        function render(canvas, heightData, biomeData, size, view) {
+        function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
@@ -479,8 +777,8 @@
             const data = imageData.data;
             
             if (view === 'heightmap') {
-                // Height value remapping: 1-3→0, 4→1, 5→2, 6→3, 7→5, 8→8, 9→11, 10→15
-                const heightMapping = {
+                // Height value remapping for land: 1-3→0, 4→1, 5→2, 6→3, 7→5, 8→8, 9→11, 10→15
+                const landHeightMapping = {
                     1: 0, 2: 0, 3: 0,  // Ocean depths → 0
                     4: 1,              // Beach → 1
                     5: 2,              // Lowlands → 2
@@ -491,10 +789,37 @@
                     10: 15             // Snow peaks → 15
                 };
                 
+                // Separate height mapping for lakes: 4→0, 5→1, 6→2, 7→4, 8→7, 9→10, 10→14
+                const lakeHeightMapping = {
+                    1: 0, 2: 0, 3: 0,  // Ocean depths → 0 (shouldn't be used for lakes)
+                    4: 0,              // Lake at beach level → 0
+                    5: 1,              // Lake at lowland level → 1
+                    6: 2,              // Lake at hill level → 2
+                    7: 4,              // Lake at highland level → 4
+                    8: 7,              // Lake at mountain level → 7
+                    9: 10,             // Lake at high mountain level → 10
+                    10: 14             // Lake at snow peak level → 14
+                };
+                
                 for (let i = 0; i < heightData.length; i++) {
                     // Convert quantized height (0.1-1.0) back to discrete levels
                     const heightLevel = Math.round(heightData[i] * 10);
-                    const remappedValue = heightMapping[heightLevel] || 0;
+                    
+                    let remappedValue;
+                    if (isWater && isWater[i]) {
+                        const waterHeight = Math.round(waterData[i]);
+                        if (waterHeight <= 3) {
+                            // Ocean/rivers: map to 0
+                            remappedValue = 0;
+                        } else {
+                            // Lakes: use lake-specific height mapping
+                            remappedValue = lakeHeightMapping[waterHeight] || 0;
+                        }
+                    } else {
+                        // Use normal height mapping for land
+                        remappedValue = landHeightMapping[heightLevel] || 0;
+                    }
+                    
                     const colorValue = remappedValue * 8; // Height value * 8 for RGB
                     
                     data[i * 4] = colorValue;     // R
@@ -514,7 +839,6 @@
             document.getElementById('seed').value = seed;
         }
 
-        // Test edge continuity - verifies adjacent faces have matching values at boundaries
         function testEdgeContinuity(size, seed) {
             const noise = new Noise(seed);
             const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
@@ -526,39 +850,33 @@
             });
             
             let errors = 0;
-            const tolerance = 0.001; // Small tolerance for floating point comparison
+            const tolerance = 0.001;
             
             // Check edge continuity between adjacent faces
             const adjacencyTests = [
-                // Test front-right edge
                 () => {
                     for (let i = 0; i < size; i++) {
-                        const frontEdge = data.front.heightData[i * size + (size - 1)]; // Right edge of front
-                        const rightEdge = data.right.heightData[i * size + 0]; // Left edge of right
+                        const frontEdge = data.front.heightData[i * size + (size - 1)];
+                        const rightEdge = data.right.heightData[i * size + 0];
                         if (Math.abs(frontEdge - rightEdge) > tolerance) {
-                            console.log(`Front-Right edge mismatch at ${i}: ${frontEdge} vs ${rightEdge}`);
                             errors++;
                         }
                     }
                 },
-                // Test front-top edge  
                 () => {
                     for (let i = 0; i < size; i++) {
-                        const frontEdge = data.front.heightData[0 * size + i]; // Top edge of front
-                        const topEdge = data.top.heightData[(size - 1) * size + i]; // Bottom edge of top
+                        const frontEdge = data.front.heightData[0 * size + i];
+                        const topEdge = data.top.heightData[(size - 1) * size + i];
                         if (Math.abs(frontEdge - topEdge) > tolerance) {
-                            console.log(`Front-Top edge mismatch at ${i}: ${frontEdge} vs ${topEdge}`);
                             errors++;
                         }
                     }
                 },
-                // Test right-top edge
                 () => {
                     for (let i = 0; i < size; i++) {
-                        const rightEdge = data.right.heightData[0 * size + i]; // Top edge of right
-                        const topEdge = data.top.heightData[i * size + (size - 1)]; // Right edge of top
+                        const rightEdge = data.right.heightData[0 * size + i];
+                        const topEdge = data.top.heightData[i * size + (size - 1)];
                         if (Math.abs(rightEdge - topEdge) > tolerance) {
-                            console.log(`Right-Top edge mismatch at ${i}: ${rightEdge} vs ${topEdge}`);
                             errors++;
                         }
                     }
@@ -566,15 +884,12 @@
             ];
             
             adjacencyTests.forEach(test => test());
-            
-            console.log(`Edge continuity test completed. Errors found: ${errors}`);
             return errors === 0;
         }
 
         function generate() {
             let size = parseInt(document.getElementById('size').value);
             
-            // Validate size input - allow any positive integer
             if (isNaN(size) || size < 1) {
                 size = 64;
                 document.getElementById('size').value = 64;
@@ -586,24 +901,25 @@
             document.getElementById('seed').value = seed;
             const noise = new Noise(seed);
             
-            console.log(`Generating ${size}x${size} mile terrain with seed: ${seed}`);
-            
-            // Test edge continuity on a small sample for performance
             if (size <= 128) {
-                console.log(`Testing edge continuity...`);
                 testEdgeContinuity(Math.min(32, size), seed);
-            } else {
-                console.log(`Skipping edge continuity test for large size (${size}x${size})`);
             }
             
             const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
             currentData = {};
+            const allFaceData = {};
             
+            // First pass: Generate all face terrain data
             faces.forEach(face => {
-                const canvas = document.getElementById(face);
                 const data = generateFace(face, size, noise);
                 currentData[face] = data;
-                render(canvas, data.heightData, data.biomeData, size, currentView);
+                
+                // Store face data for cross-face lake detection
+                allFaceData[face] = {
+                    waterData: data.layers.water,
+                    landData: data.layers.land,
+                    isWater: data.layers.isWater
+                };
                 
                 // Store layers from front face for layer visualization
                 if (face === 'front') {
@@ -611,17 +927,62 @@
                 }
             });
             
-            // Log scale information with expected feature counts
-            console.log(`Generated enhanced terrain for ${size}x${size} square miles:`);
-            console.log(`- Ocean depths: Deep ocean (1), Medium (2), Shallow 2-15mi from shore (3)`);
-            console.log(`- Heights: Remapped values (Ocean:0, Beach:1, Lowlands:2, Hills:3, Highlands:5, Mountains:8, High:11, Snow:15)`);
-            console.log(`- Colors: Exactly 10 unique biome colors with enhanced ocean depth variation`);
-            console.log(`- Expected continents: ~${Math.floor(size/80)} (80 miles each)`);
-            console.log(`- Expected islands: ~${Math.floor(size/20)} (20 miles each)`);
-            console.log(`- Expected mountain ranges: ~${Math.floor(size/40)} (40 miles each)`);
-            if (size >= 10) console.log(`- Rivers: ~4 miles wide`);
-            if (size >= 20) console.log(`- Coastal features: ~6 mile detail`);
-            console.log(`- Climate zones: ~100 mile scale`);
+            // Second pass: Adjust lake heights based on size across all faces
+            adjustLakeHeights(allFaceData, size);
+            
+            // Third pass: Update final heightData and render
+            faces.forEach(face => {
+                const data = currentData[face];
+                const faceData = allFaceData[face];
+                
+                // Update final height data with adjusted lake heights
+                for (let i = 0; i < size * size; i++) {
+                    if (faceData.isWater[i]) {
+                        data.heightData[i] = faceData.waterData[i] / 10;
+                    } else {
+                        data.heightData[i] = faceData.landData[i] / 10;
+                    }
+                }
+                
+                // Update layers with adjusted data
+                data.layers.water = faceData.waterData;
+                data.layers.land = faceData.landData;
+                data.layers.isWater = faceData.isWater;
+                
+                // Regenerate biome data with correct lake classifications
+                const biomeData = new Uint8ClampedArray(size * size * 4);
+                for (let i = 0; i < size * size; i++) {
+                    if (faceData.isWater[i]) {
+                        const actualWaterHeight = Math.round(faceData.waterData[i]);
+                        let waterColorLevel;
+                        
+                        if (actualWaterHeight <= 3) {
+                            waterColorLevel = actualWaterHeight;
+                        } else {
+                            waterColorLevel = 3;
+                        }
+                        
+                        const biome = getBiome(waterColorLevel, 0, 1);
+                        
+                        const biomeIdx = i * 4;
+                        biomeData[biomeIdx] = biome[0];
+                        biomeData[biomeIdx + 1] = biome[1];
+                        biomeData[biomeIdx + 2] = biome[2];
+                        biomeData[biomeIdx + 3] = 255;
+                    } else {
+                        const biomeIdx = i * 4;
+                        biomeData[biomeIdx] = data.biomeData[biomeIdx];
+                        biomeData[biomeIdx + 1] = data.biomeData[biomeIdx + 1];
+                        biomeData[biomeIdx + 2] = data.biomeData[biomeIdx + 2];
+                        biomeData[biomeIdx + 3] = data.biomeData[biomeIdx + 3];
+                    }
+                }
+                
+                data.biomeData = biomeData;
+                
+                const canvas = document.getElementById(face);
+                render(canvas, data.heightData, data.biomeData, size, currentView, faceData.isWater, faceData.waterData);
+            });
         }
 
         function switchView() {
@@ -633,7 +994,8 @@
                 Object.keys(currentData).forEach(face => {
                     const canvas = document.getElementById(face);
                     const data = currentData[face];
-                    render(canvas, data.heightData, data.biomeData, size, currentView);
+                    // Use the stored layers data which contains the adjusted water heights
+                    render(canvas, data.heightData, data.biomeData, size, currentView, data.layers.isWater, data.layers.water);
                 });
             }
         }
@@ -715,18 +1077,14 @@
                 link.download = `cubenet_${currentView}_${sizeValue}mi_${seedValue}_${timestamp}.png`;
                 link.href = combinedCanvas.toDataURL();
                 link.click();
-                
-                console.log(`Downloaded cube net (${currentView} view): ${totalWidth}x${totalHeight}px`);
             } catch (error) {
                 console.error('Failed to download cube net:', error);
             }
         }
 
         function downloadAll() {
-            console.log(`Initiated download of 6cube faces (${currentView} view)`);
             if (!currentData) {
                 alert('Please generate a map first!');
-                console.log('No map to download');
                 return;
             }
 
