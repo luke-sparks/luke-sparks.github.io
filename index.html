@@ -155,53 +155,110 @@
             return { x: x/len, y: y/len, z: z/len };
         }
 
-        function enhanceOceanDepths(waterData, isWater, size) {
-            // Optimized ocean depth enhancement for separated water data
+        function enhanceOceanDepths(allFaceData, size) {
+            const adjacency = getCubeFaceAdjacency();
             const shallowMinRange = 2;
             const shallowMaxRange = 15;
             const searchRadius = Math.min(shallowMaxRange + 5, size / 4);
             
-            // Create distance map using efficient flood-fill algorithm
-            const distanceMap = new Float32Array(size * size);
+            // Create global distance maps and queue for all faces
+            const globalDistanceMap = {};
             const queue = [];
             
-            // Initialize distance map and find land pixels
-            for (let y = 0; y < size; y++) {
-                for (let x = 0; x < size; x++) {
-                    const idx = y * size + x;
-                    
-                    if (isWater[idx]) {
-                        distanceMap[idx] = Infinity;
-                    } else {
-                        distanceMap[idx] = 0;
-                        queue.push({x, y, dist: 0});
+            // Initialize distance maps for all faces and find land pixels
+            Object.keys(allFaceData).forEach(face => {
+                const { isWater } = allFaceData[face];
+                globalDistanceMap[face] = new Float32Array(size * size);
+                
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const idx = y * size + x;
+                        
+                        if (isWater[idx]) {
+                            globalDistanceMap[face][idx] = Infinity;
+                        } else {
+                            globalDistanceMap[face][idx] = 0;
+                            queue.push({face, x, y, dist: 0});
+                        }
                     }
                 }
-            }
+            });
             
-            if (queue.length === 0) return; // No land found
+            if (queue.length === 0) return;
             
-            // Breadth-first search for distance calculation
+            // Cross-face breadth-first search for distance calculation
             let queuePos = 0;
             while (queuePos < queue.length) {
-                const {x, y, dist} = queue[queuePos++];
+                const {face, x, y, dist} = queue[queuePos++];
                 
-                // Check 8-connected neighbors
+                // Check 8-connected neighbors (including cross-face)
                 for (let dy = -1; dy <= 1; dy++) {
                     for (let dx = -1; dx <= 1; dx++) {
                         if (dx === 0 && dy === 0) continue;
                         
                         const nx = x + dx;
                         const ny = y + dy;
+                        const newDist = dist + Math.sqrt(dx * dx + dy * dy);
                         
+                        // Handle within-face neighbors
                         if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
                             const nIdx = ny * size + nx;
-                            const newDist = dist + Math.sqrt(dx * dx + dy * dy);
+                            const faceData = allFaceData[face];
                             
-                            if (isWater[nIdx] && newDist < distanceMap[nIdx]) {
-                                distanceMap[nIdx] = newDist;
+                            if (faceData.isWater[nIdx] && newDist < globalDistanceMap[face][nIdx]) {
+                                globalDistanceMap[face][nIdx] = newDist;
                                 if (newDist <= searchRadius) {
-                                    queue.push({x: nx, y: ny, dist: newDist});
+                                    queue.push({face, x: nx, y: ny, dist: newDist});
+                                }
+                            }
+                        } else {
+                            // Handle cross-face neighbors
+                            let adjacentFace = null;
+                            let adjacentX = -1, adjacentY = -1;
+                            
+                            if (nx < 0 && adjacency[face].left) {
+                                const [adjFace, adjEdge] = adjacency[face].left;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (y < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[y].x;
+                                    adjacentY = adjPixels[y].y;
+                                }
+                            } else if (nx >= size && adjacency[face].right) {
+                                const [adjFace, adjEdge] = adjacency[face].right;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (y < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[y].x;
+                                    adjacentY = adjPixels[y].y;
+                                }
+                            } else if (ny < 0 && adjacency[face].top) {
+                                const [adjFace, adjEdge] = adjacency[face].top;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (x < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[x].x;
+                                    adjacentY = adjPixels[x].y;
+                                }
+                            } else if (ny >= size && adjacency[face].bottom) {
+                                const [adjFace, adjEdge] = adjacency[face].bottom;
+                                const adjPixels = getEdgePixels(size, adjEdge);
+                                if (x < adjPixels.length) {
+                                    adjacentFace = adjFace;
+                                    adjacentX = adjPixels[x].x;
+                                    adjacentY = adjPixels[x].y;
+                                }
+                            }
+                            
+                            if (adjacentFace && allFaceData[adjacentFace]) {
+                                const adjIdx = adjacentY * size + adjacentX;
+                                const adjFaceData = allFaceData[adjacentFace];
+                                
+                                if (adjFaceData.isWater[adjIdx] && newDist < globalDistanceMap[adjacentFace][adjIdx]) {
+                                    globalDistanceMap[adjacentFace][adjIdx] = newDist;
+                                    if (newDist <= searchRadius) {
+                                        queue.push({face: adjacentFace, x: adjacentX, y: adjacentY, dist: newDist});
+                                    }
                                 }
                             }
                         }
@@ -209,44 +266,29 @@
                 }
             }
             
-            // Apply depth levels and count pixels in single pass
-            let deepOceanCount = 0;
-            let mediumOceanIndices = [];
-            
-            for (let i = 0; i < size * size; i++) {
-                if (isWater[i]) {
-                    const distance = distanceMap[i];
-                    let depthLevel;
-                    
-                    if (distance <= shallowMinRange) {
-                        depthLevel = 3;
-                    } else if (distance <= shallowMaxRange) {
-                        const ratio = (distance - shallowMinRange) / (shallowMaxRange - shallowMinRange);
-                        depthLevel = ratio < 0.5 ? 3 : 2;
-                    } else {
-                        depthLevel = 1;
-                    }
-                    
-                    waterData[i] = depthLevel;
-                    
-                    if (depthLevel === 1) {
-                        deepOceanCount++;
-                    } else if (depthLevel === 2) {
-                        mediumOceanIndices.push(i);
+            // Apply depth levels for each face
+            Object.keys(allFaceData).forEach(face => {
+                const { waterData, isWater } = allFaceData[face];
+                const distanceMap = globalDistanceMap[face];
+                
+                for (let i = 0; i < size * size; i++) {
+                    if (isWater[i]) {
+                        const distance = distanceMap[i];
+                        let depthLevel;
+                        
+                        if (distance <= shallowMinRange) {
+                            depthLevel = 3;
+                        } else if (distance <= shallowMaxRange) {
+                            const ratio = (distance - shallowMinRange) / (shallowMaxRange - shallowMinRange);
+                            depthLevel = ratio < 0.5 ? 3 : 2;
+                        } else {
+                            depthLevel = 1;
+                        }
+                        
+                        waterData[i] = depthLevel;
                     }
                 }
-            }
-            
-            // Ensure at least 10% deep ocean
-            const totalWater = size * size - queue.length;
-            const requiredDeepOcean = Math.ceil(totalWater * 0.1);
-            
-            if (deepOceanCount < requiredDeepOcean && mediumOceanIndices.length > 0) {
-                const toConvert = Math.min(requiredDeepOcean - deepOceanCount, mediumOceanIndices.length);
-                for (let i = 0; i < toConvert; i++) {
-                    waterData[mediumOceanIndices[i]] = 1;
-                }
-            }
+            });
         }
 
         function getCubeFaceAdjacency() {
@@ -692,9 +734,7 @@
             }
             
             // Post-process ocean for more dramatic depth variation
-            enhanceOceanDepths(waterData, isWater, size);
-            
-            // Note: Lake adjustment is now done as a separate pass after all faces are generated
+            // Note: Ocean depth enhancement is now done as a separate pass after all faces are generated
             
             // Combine water and land data into final height data
             for (let i = 0; i < size * size; i++) {
@@ -927,7 +967,8 @@
                 }
             });
             
-            // Second pass: Adjust lake heights based on size across all faces
+            // Second pass: Enhance ocean depths across all faces, then adjust lake heights
+            enhanceOceanDepths(allFaceData, size);
             adjustLakeHeights(allFaceData, size);
             
             // Third pass: Update final heightData and render
