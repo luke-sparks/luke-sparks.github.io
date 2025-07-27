@@ -782,7 +782,8 @@ function generateFace(face, size, noise) {
             
             if (isWaterPixel) {
                 // Generate water depths (will be adjusted later for lakes)
-                waterData[idx] = landHeight <= 0.1 ? 1 : (landHeight <= 0.2 ? 2 : 3);
+                // waterData[idx] = landHeight <= 0.1 ? 1 : (landHeight <= 0.2 ? 2 : 3);
+                waterData[idx] = 1;
                 landData[idx] = 0;
             } else {
                 // Quantize land height to discrete levels (4-10)
@@ -1144,7 +1145,7 @@ function updateRecentSeedsDisplay() {
     });
 }
 
-function generate() {
+async function generate() {
     let size = parseInt(document.getElementById('size').value);
     
     if (isNaN(size) || size < 1) {
@@ -1165,8 +1166,20 @@ function generate() {
     currentData = {};
     const allFaceData = {};
     
-    // First pass: Generate all face terrain data
-    faces.forEach(face => {
+    // Helper function to yield control back to browser
+    function yieldToMain() {
+        return new Promise(resolve => setTimeout(resolve, 0));
+    }
+    
+    // First pass: Generate all face terrain data and render initial results
+    for (let i = 0; i < faces.length; i++) {
+        const face = faces[i];
+        
+        // Yield to main thread after each face to prevent blocking
+        if (i > 0) {
+            await yieldToMain();
+        }
+        
         const data = generateFace(face, size, noise);
         currentData[face] = data;
         
@@ -1181,41 +1194,58 @@ function generate() {
         if (face === 'front') {
             currentLayers = data.layers;
         }
-    });
+        
+        // Render initial terrain (before ocean enhancement)
+        const canvas = document.getElementById(face);
+        render(canvas, data.heightData, data.biomeData, size, currentView, data.layers.isWater, data.layers.water);
+    }
+    
+    // Yield before second pass
+    await yieldToMain();
     
     // Second pass: Enhance ocean depths across all faces, then adjust lake heights
     enhanceOceanDepths(allFaceData, size);
     adjustLakeHeights(allFaceData, size);
     
-    // Third pass: Update final heightData and render
-    faces.forEach(face => {
+    // Yield after ocean enhancement
+    await yieldToMain();
+    
+    // Third pass: Update final heightData and render with enhanced ocean depths
+    for (let i = 0; i < faces.length; i++) {
+        const face = faces[i];
+        
+        // Yield to main thread after each face to prevent blocking
+        if (i > 0) {
+            await yieldToMain();
+        }
+        
         const data = currentData[face];
         const faceData = allFaceData[face];
         
-        // Update final height data with adjusted lake heights
-        for (let i = 0; i < size * size; i++) {
-            if (faceData.isWater[i]) {
-                data.heightData[i] = faceData.waterData[i] / 10;
+        // Update final height data with enhanced ocean depths and adjusted lake heights
+        for (let j = 0; j < size * size; j++) {
+            if (faceData.isWater[j]) {
+                data.heightData[j] = faceData.waterData[j] / 10;
             } else {
-                data.heightData[i] = faceData.landData[i] / 10;
+                data.heightData[j] = faceData.landData[j] / 10;
             }
         }
         
-        // Update layers with adjusted data
+        // Update layers with enhanced data
         data.layers.water = faceData.waterData;
         data.layers.land = faceData.landData;
         data.layers.isWater = faceData.isWater;
         
-        // Regenerate biome data with correct lake classifications
+        // Regenerate biome data with enhanced ocean depths and correct lake classifications
         const biomeData = new Uint8ClampedArray(size * size * 4);
         
         // Calculate feature scales for biome generation
         const climateScale = size / 100;
         const precipScale = size / 80;
         
-        for (let i = 0; i < size * size; i++) {
-            if (faceData.isWater[i]) {
-                const actualWaterHeight = Math.round(faceData.waterData[i]);
+        for (let j = 0; j < size * size; j++) {
+            if (faceData.isWater[j]) {
+                const actualWaterHeight = Math.round(faceData.waterData[j]);
                 let waterColorLevel;
                 
                 if (actualWaterHeight <= 3) {
@@ -1226,19 +1256,19 @@ function generate() {
                 
                 const biome = getBiome(waterColorLevel, 0, 1);
                 
-                const biomeIdx = i * 4;
+                const biomeIdx = j * 4;
                 biomeData[biomeIdx] = biome[0];
                 biomeData[biomeIdx + 1] = biome[1];
                 biomeData[biomeIdx + 2] = biome[2];
                 biomeData[biomeIdx + 3] = 255;
             } else {
                 // For land pixels (including converted small water bodies), regenerate biome
-                const y = Math.floor(i / size);
-                const x = i % size;
+                const y = Math.floor(j / size);
+                const x = j % size;
                 const u = x / (size - 1);
                 const v = y / (size - 1);
                 const coord = getCubeCoords(face, u, v);
-                const finalHeight = Math.round(faceData.landData[i]);
+                const finalHeight = Math.round(faceData.landData[j]);
                 
                 // Generate climate for land biome
                 let latitude = Math.abs(coord.y);
@@ -1258,7 +1288,7 @@ function generate() {
                 
                 const biome = getBiome(finalHeight, temperature, moisture);
                 
-                const biomeIdx = i * 4;
+                const biomeIdx = j * 4;
                 biomeData[biomeIdx] = biome[0];
                 biomeData[biomeIdx + 1] = biome[1];
                 biomeData[biomeIdx + 2] = biome[2];
@@ -1268,9 +1298,10 @@ function generate() {
         
         data.biomeData = biomeData;
         
+        // Final render with enhanced ocean depths
         const canvas = document.getElementById(face);
         render(canvas, data.heightData, data.biomeData, size, currentView, faceData.isWater, faceData.waterData);
-    });
+    }
 }
 
 function downloadCubeNet() {
