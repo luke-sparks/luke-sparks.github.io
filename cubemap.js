@@ -19,7 +19,7 @@ function createWorkerBlobURL() {
 // Face Worker - Handles terrain generation for individual cube faces
 // This worker runs in a separate thread for true parallelization
 
-const rotationAngle = 1.27409; // 73 degrees in radians
+const rotationAngle = 0.85;
 
 class Noise {
     constructor(seed) {
