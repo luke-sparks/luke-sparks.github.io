@@ -5,6 +5,20 @@ let seeds = [];
 let favoriteSeeds = [];
 let defaultSize = 80;
 let defaultSeed = 'default';
+
+// Worker pool for parallel face generation
+let workerPool = [];
+let taskCounter = 0;
+let workerBlobURL = null;
+
+// Create worker code as blob URL to avoid CORS issues with file:// protocol
+function createWorkerBlobURL() {
+    if (workerBlobURL) return workerBlobURL;
+    
+    const workerCode = `
+// Face Worker - Handles terrain generation for individual cube faces
+// This worker runs in a separate thread for true parallelization
+
 const rotationAngle = 1.27409; // 73 degrees in radians
 
 class Noise {
@@ -106,506 +120,6 @@ function getCubeCoords(face, u, v) {
     // Normalize to unit sphere for seamless noise sampling across edges
     const len = Math.sqrt(x*x + y*y + z*z);
     return { x: x/len, y: y/len, z: z/len };
-}
-
-function enhanceOceanDepths(allFaceData, size) {
-    const faceAdjacency = getCubeFaceAdjacency();
-    const shallowWaterMinDistance = 2;
-    const shallowWaterMaxDistance = 15;
-    const maximumSearchRadius = Math.min(shallowWaterMaxDistance + 5, size / 4);
-    
-    // Create global distance maps and BFS queue for all faces
-    const distanceFromLandMap = {};
-    const breadthFirstSearchQueue = [];
-    
-    // Initialize distance maps for all faces and find land pixels as starting points
-    Object.keys(allFaceData).forEach(currentFace => {
-        const { isWater } = allFaceData[currentFace];
-        distanceFromLandMap[currentFace] = new Float32Array(size * size);
-        
-        for (let pixelRow = 0; pixelRow < size; pixelRow++) {
-            for (let pixelColumn = 0; pixelColumn < size; pixelColumn++) {
-                const pixelIndex = pixelRow * size + pixelColumn;
-                
-                if (isWater[pixelIndex]) {
-                    distanceFromLandMap[currentFace][pixelIndex] = Infinity;
-                } else {
-                    // Land pixels start with distance 0
-                    distanceFromLandMap[currentFace][pixelIndex] = 0;
-                    breadthFirstSearchQueue.push({face: currentFace, x: pixelColumn, y: pixelRow, dist: 0});
-                }
-            }
-        }
-    });
-    
-    if (breadthFirstSearchQueue.length === 0) return;
-    
-    // Cross-face breadth-first search for distance calculation
-    let currentQueuePosition = 0;
-    while (currentQueuePosition < breadthFirstSearchQueue.length) {
-        const {face: currentFace, x: currentPixelX, y: currentPixelY, dist: currentDistance} = breadthFirstSearchQueue[currentQueuePosition++];
-        
-        // Check 8-connected neighbors (including cross-face)
-        for (let rowOffset = -1; rowOffset <= 1; rowOffset++) {
-            for (let columnOffset = -1; columnOffset <= 1; columnOffset++) {
-                if (columnOffset === 0 && rowOffset === 0) continue;
-                
-                const neighborX = currentPixelX + columnOffset;
-                const neighborY = currentPixelY + rowOffset;
-                const newDistanceToLand = currentDistance + Math.sqrt(columnOffset * columnOffset + rowOffset * rowOffset);
-                
-                // Handle within-face neighbors
-                if (neighborX >= 0 && neighborX < size && neighborY >= 0 && neighborY < size) {
-                    const neighborPixelIndex = neighborY * size + neighborX;
-                    
-                    if (allFaceData[currentFace].isWater[neighborPixelIndex] && newDistanceToLand < distanceFromLandMap[currentFace][neighborPixelIndex]) {
-                        distanceFromLandMap[currentFace][neighborPixelIndex] = newDistanceToLand;
-                        if (newDistanceToLand <= maximumSearchRadius) {
-                            breadthFirstSearchQueue.push({face: currentFace, x: neighborX, y: neighborY, dist: newDistanceToLand});
-                        }
-                    }
-                } else {
-                    // Handle cross-face neighbors - only allow cardinal directions (no diagonals across edges)
-                    let crossFaceAdjacentFace = null;
-                    let crossFaceAdjacentX = -1, crossFaceAdjacentY = -1;
-                    let sourceEdgeIndex = -1, targetEdgeIndex = -1;
-                    
-                    // Only process cardinal directions (columnOffset=0 OR rowOffset=0, not both non-zero)
-                    const isCardinalDirection = (columnOffset === 0) !== (rowOffset === 0); // XOR: exactly one is zero
-
-                    if (isCardinalDirection) {
-                        if (neighborX < 0) {
-                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].left;
-                            crossFaceAdjacentFace = adjacentFaceName;
-                            sourceEdgeIndex = 3;
-                            targetEdgeIndex = adjacentFaceEdgeIndex;
-                        } else if (neighborX >= size) {
-                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].right;
-                            crossFaceAdjacentFace = adjacentFaceName;
-                            sourceEdgeIndex = 1;
-                            targetEdgeIndex = adjacentFaceEdgeIndex;
-                        } else if (neighborY < 0) {
-                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].top;
-                            crossFaceAdjacentFace = adjacentFaceName;
-                            sourceEdgeIndex = 0;
-                            targetEdgeIndex = adjacentFaceEdgeIndex;
-                        } else if (neighborY >= size) {
-                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].bottom;
-                            crossFaceAdjacentFace = adjacentFaceName;
-                            sourceEdgeIndex = 2;
-                            targetEdgeIndex = adjacentFaceEdgeIndex;
-                        } else {
-                            console.log("shouldn't ever get here");
-                            continue;
-                        }
-
-                        crossFaceAdjacentX = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).x;
-                        crossFaceAdjacentY = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).y;
-                        
-                        const adjacentPixelIndex = crossFaceAdjacentY * size + crossFaceAdjacentX;
-                        const adjacentFaceData = allFaceData[crossFaceAdjacentFace];
-                        
-                        if (adjacentFaceData.isWater[adjacentPixelIndex] && newDistanceToLand < distanceFromLandMap[crossFaceAdjacentFace][adjacentPixelIndex]) {
-                            distanceFromLandMap[crossFaceAdjacentFace][adjacentPixelIndex] = newDistanceToLand;
-                            if (newDistanceToLand <= maximumSearchRadius) {
-                                breadthFirstSearchQueue.push({face: crossFaceAdjacentFace, x: crossFaceAdjacentX, y: crossFaceAdjacentY, dist: newDistanceToLand});
-                            }
-                        }
-                    }
-                    // Diagonal movements that would cross face boundaries are ignored
-                }
-            }
-        }
-    }
-    
-    // Apply depth levels for each face based on calculated distances
-    Object.keys(allFaceData).forEach(currentFace => {
-        const { waterData, isWater } = allFaceData[currentFace];
-        const faceDistanceMap = distanceFromLandMap[currentFace];
-        
-        for (let pixelIndex = 0; pixelIndex < size * size; pixelIndex++) {
-            if (isWater[pixelIndex]) {
-                const distanceFromNearestLand = faceDistanceMap[pixelIndex];
-                let oceanDepthLevel;
-                
-                if (distanceFromNearestLand <= shallowWaterMinDistance) {
-                    oceanDepthLevel = 3; // Shallow water near shore
-                } else if (distanceFromNearestLand <= shallowWaterMaxDistance) {
-                    const distanceRatio = (distanceFromNearestLand - shallowWaterMinDistance) / (shallowWaterMaxDistance - shallowWaterMinDistance);
-                    oceanDepthLevel = distanceRatio < 0.5 ? 3 : 2; // Transitional depth
-                } else {
-                    oceanDepthLevel = 1; // Deep ocean water
-                }
-                
-                waterData[pixelIndex] = oceanDepthLevel;
-            }
-        }
-    });
-}
-
-function getCubeFaceAdjacency() {
-    // Define how cube faces connect to each other
-    // Each edge is defined as [face, edge] where edge is 0=top, 1=right, 2=bottom, 3=left
-    const topEdge = 0;
-    const rightEdge = 1;
-    const bottomEdge = 2;
-    const leftEdge = 3
-    return {
-        'front': {
-            top: ['top', bottomEdge],      // Front top -> Top bottom
-            right: ['right', leftEdge],  // Front right -> Right left  
-            bottom: ['bottom', topEdge], // Front bottom -> Bottom top
-            left: ['left', rightEdge]     // Front left -> Left right
-        },
-        'back': {
-            top: ['top', topEdge],      // Back top -> Top top
-            right: ['left', leftEdge],   // Back right -> Left left
-            bottom: ['bottom', bottomEdge], // Back bottom -> Bottom bottom  
-            left: ['right', rightEdge]    // Back left -> Right right
-        },
-        'right': {
-            top: ['top', rightEdge],      // Right top -> Top right
-            right: ['back', leftEdge],   // Right right -> Back left
-            bottom: ['bottom', rightEdge], // Right bottom -> Bottom right
-            left: ['front', rightEdge]    // Right left -> Front right
-        },
-        'left': {
-            top: ['top', leftEdge],      // Left top -> Top left
-            right: ['front', leftEdge],  // Left right -> Front left
-            bottom: ['bottom', leftEdge], // Left bottom -> Bottom left
-            left: ['back', rightEdge]     // Left left -> Back right
-        },
-        'top': {
-            top: ['back', topEdge],     // Top top -> Back top
-            right: ['right', topEdge],  // Top right -> Right top
-            bottom: ['front', topEdge], // Top bottom -> Front top
-            left: ['left', topEdge]     // Top left -> Left top
-        },
-        'bottom': {
-            top: ['front', bottomEdge],    // Bottom top -> Front bottom
-            right: ['right', bottomEdge],  // Bottom right -> Right bottom
-            bottom: ['back', bottomEdge],  // Bottom bottom -> Back bottom
-            left: ['left', bottomEdge]     // Bottom left -> Left bottom
-        }
-    };
-}
-
-function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFaceName, sourceEdgeIndex) {
-    // Transform pixel location when crossing edges
-    // This accounts for the different orientations of cube faces
-    
-    // Create a key to identify the specific face transition
-    const faceTransitionKey = `${sourceFaceName}-${sourceEdgeIndex}`;
-
-    const sizeAdjusted = size - 1;
-    
-    // Define transformations for specific face transitions based on cube topology
-    switch (faceTransitionKey) {
-        // Front face transitions
-        case 'front-0':     // front top -> top bottom
-            return {x: sourcePixelX, y: sizeAdjusted};
-        case 'front-1':   // front right -> right left  
-            return {x: 0, y: sourcePixelY};
-        case 'front-2':  // front bottom -> bottom top
-            return {x: sourcePixelX, y: 0};
-        case 'front-3':    // front left -> left right
-            return {x: sizeAdjusted, y: sourcePixelY};
-            
-        // Right face transitions  
-        case 'right-0':     // right top -> top right
-            return {x: sizeAdjusted, y: size - sourcePixelX};
-        case 'right-1':    // right right -> back left
-            return {x: 0, y: sourcePixelY};
-        case 'right-2':  // right bottom -> bottom right  
-            return {x: sizeAdjusted, y: sourcePixelX};
-        case 'right-3':   // right left -> front right
-            return {x: sizeAdjusted, y: sourcePixelY};
-            
-        // Back face transitions
-        case 'back-0':      // back top -> top top
-            return {x: size - sourcePixelX, y: 0};
-        case 'back-1':     // back right -> left left
-            return {x: 0, y: sourcePixelY};
-        case 'back-2':   // back bottom -> bottom bottom
-            return {x: size - sourcePixelX, y: sizeAdjusted};
-        case 'back-3':    // back left -> right right
-            return {x: sizeAdjusted, y: sourcePixelY};
-            
-        // Left face transitions
-        case 'left-0':      // left top -> top left
-            return {x: 0, y: sourcePixelX};
-        case 'left-1':    // left right -> front left
-            return {x: 0, y: sourcePixelY};  
-        case 'left-2':   // left bottom -> bottom left
-            return {x: 0, y: size - sourcePixelX};
-        case 'left-3':     // left left -> back right
-            return {x: sizeAdjusted, y: sourcePixelY};
-            
-        // Top face transitions
-        case 'top-0':      // top top -> back top
-            return {x: size - sourcePixelX, y: 0};
-        case 'top-1':     // top right -> right top
-            return {x: size - sourcePixelY, y: 0};
-        case 'top-2':     // top bottom -> front top
-            return {x: sourcePixelX, y: 0};
-        case 'top-3':      // top left -> left top
-            return {x: sourcePixelY, y: 0};
-            
-        // Bottom face transitions
-        case 'bottom-0':  // bottom top -> front bottom
-            return {x: sourcePixelX, y: sizeAdjusted};
-        case 'bottom-1':  // bottom right -> right bottom  
-            return {x: sourcePixelY, y: sizeAdjusted};
-        case 'bottom-2':   // bottom bottom -> back bottom
-            return {x: size - sourcePixelX, y: sizeAdjusted};
-        case 'bottom-3':   // bottom left -> left bottom
-            return {x: size - sourcePixelY, y: sizeAdjusted};
-            
-        default:
-            // If we don't have a specific transformation, return original direction
-            // This should not happen in a proper cube topology
-            console.warn(`No direction transformation defined for ${faceTransitionKey}`);
-            return {x: columnOffset, y: rowOffset};
-    }
-}
-
-function getEdgePixels(faceSize, edgeIndex) {
-    // Get pixel coordinates for each edge of a face
-    const edgePixelCoordinates = [];
-    switch(edgeIndex) {
-        case 0: // top edge
-            for (let columnIndex = 0; columnIndex < faceSize; columnIndex++) {
-                edgePixelCoordinates.push({x: columnIndex, y: 0});
-            }
-            break;
-        case 1: // right edge  
-            for (let rowIndex = 0; rowIndex < faceSize; rowIndex++) {
-                edgePixelCoordinates.push({x: faceSize-1, y: rowIndex});
-            }
-            break;
-        case 2: // bottom edge
-            for (let columnIndex = 0; columnIndex < faceSize; columnIndex++) {
-                edgePixelCoordinates.push({x: columnIndex, y: faceSize-1});
-            }
-            break;
-        case 3: // left edge
-            for (let rowIndex = 0; rowIndex < faceSize; rowIndex++) {
-                edgePixelCoordinates.push({x: 0, y: rowIndex});
-            }
-            break;
-    }
-    return edgePixelCoordinates;
-}
-
-function adjustLakeHeights(allFaceData, size) {
-    const adjacency = getCubeFaceAdjacency();
-    const maxLakeSize = Math.max(20, size * size * 0.1);
-    const minLakeSize = 5; // Always remove water bodies with 5 or fewer pixels
-    const globalVisited = {};
-    const waterBodies = [];
-    
-    // Initialize global visited tracking
-    Object.keys(allFaceData).forEach(face => {
-        globalVisited[face] = new Uint8Array(size * size);
-    });
-    
-    // Find all connected water bodies across faces
-    for (const startFace of Object.keys(allFaceData)) {
-        const { isWater } = allFaceData[startFace];
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const idx = y * size + x;
-                
-                if (isWater[idx] && !globalVisited[startFace][idx]) {
-                    const waterBody = [];
-                    const queue = [{face: startFace, x, y}];
-                    
-                    // Cross-face flood fill
-                    while (queue.length > 0) {
-                        const {face, x: cx, y: cy} = queue.shift();
-                        const cidx = cy * size + cx;
-                        
-                        if (globalVisited[face][cidx]) continue;
-                        globalVisited[face][cidx] = 1;
-                        waterBody.push({face, x: cx, y: cy, idx: cidx});
-                        
-                        const faceData = allFaceData[face];
-                        
-                        // Check neighbors within same face
-                        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                            const nx = cx + dx;
-                            const ny = cy + dy;
-                            
-                            if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                                const nidx = ny * size + nx;
-                                if (faceData.isWater[nidx] && !globalVisited[face][nidx]) {
-                                    queue.push({face, x: nx, y: ny});
-                                }
-                            } else {
-                                // Check cross-face connections
-                                let adjacentFace = null;
-                                let adjacentX = -1, adjacentY = -1;
-                                
-                                if (nx < 0 && adjacency[face].left) {
-                                    const [adjFace, adjEdge] = adjacency[face].left;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cy < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cy].x;
-                                        adjacentY = adjPixels[cy].y;
-                                    }
-                                } else if (nx >= size && adjacency[face].right) {
-                                    const [adjFace, adjEdge] = adjacency[face].right;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cy < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cy].x;
-                                        adjacentY = adjPixels[cy].y;
-                                    }
-                                } else if (ny < 0 && adjacency[face].top) {
-                                    const [adjFace, adjEdge] = adjacency[face].top;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cx < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cx].x;
-                                        adjacentY = adjPixels[cx].y;
-                                    }
-                                } else if (ny >= size && adjacency[face].bottom) {
-                                    const [adjFace, adjEdge] = adjacency[face].bottom;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cx < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cx].x;
-                                        adjacentY = adjPixels[cx].y;
-                                    }
-                                }
-                                
-                                if (adjacentFace && allFaceData[adjacentFace]) {
-                                    const adjIdx = adjacentY * size + adjacentX;
-                                    if (allFaceData[adjacentFace].isWater[adjIdx] && !globalVisited[adjacentFace][adjIdx]) {
-                                        queue.push({face: adjacentFace, x: adjacentX, y: adjacentY});
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    waterBodies.push({waterBody, size: waterBody.length});
-                }
-            }
-        }
-    }
-    
-    // Process water bodies: remove tiny ones, adjust lake heights, leave oceans
-    for (const {waterBody, size: bodySize} of waterBodies) {
-        if (bodySize <= minLakeSize) {
-            // Remove really small water bodies by converting to land
-            for (const {face, x, y, idx} of waterBody) {
-                const faceData = allFaceData[face];
-                
-                // Find average surrounding land height (8-connected for better sampling)
-                let landHeights = [];
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        
-                        const nx = x + dx;
-                        const ny = y + dy;
-                        
-                        if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                            const nidx = ny * size + nx;
-                            if (!faceData.isWater[nidx]) {
-                                landHeights.push(faceData.landData[nidx]);
-                            }
-                        }
-                    }
-                }
-                
-                if (landHeights.length > 0) {
-                    const avgHeight = Math.round(landHeights.reduce((a, b) => a + b, 0) / landHeights.length);
-                    
-                    // Convert water pixel to land
-                    faceData.isWater[idx] = 0;
-                    faceData.waterData[idx] = 0;
-                    faceData.landData[idx] = avgHeight;
-                }
-            }
-        } else if (bodySize <= maxLakeSize) {
-            // Adjust lake heights for medium-sized water bodies
-            let minSurroundingHeight = 11;
-            
-            for (const {face, x, y} of waterBody) {
-                const faceData = allFaceData[face];
-                
-                // Check only 4-connected neighbors for shore height
-                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    
-                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                        const nidx = ny * size + nx;
-                        if (!faceData.isWater[nidx]) {
-                            minSurroundingHeight = Math.min(minSurroundingHeight, faceData.landData[nidx]);
-                        }
-                    } else {
-                        // Handle cross-face neighbors
-                        let adjacentFace = null;
-                        let adjacentX = -1, adjacentY = -1;
-                        
-                        if (nx < 0 && adjacency[face].left) {
-                            const [adjFace, adjEdge] = adjacency[face].left;
-                            const adjPixels = getEdgePixels(size, adjEdge);
-                            if (y < adjPixels.length) {
-                                adjacentFace = adjFace;
-                                adjacentX = adjPixels[y].x;
-                                adjacentY = adjPixels[y].y;
-                            }
-                        } else if (nx >= size && adjacency[face].right) {
-                            const [adjFace, adjEdge] = adjacency[face].right;
-                            const adjPixels = getEdgePixels(size, adjEdge);
-                            if (y < adjPixels.length) {
-                                adjacentFace = adjFace;
-                                adjacentX = adjPixels[y].x;
-                                adjacentY = adjPixels[y].y;
-                            }
-                        } else if (ny < 0 && adjacency[face].top) {
-                            const [adjFace, adjEdge] = adjacency[face].top;
-                            const adjPixels = getEdgePixels(size, adjEdge);
-                            if (x < adjPixels.length) {
-                                adjacentFace = adjFace;
-                                adjacentX = adjPixels[x].x;
-                                adjacentY = adjPixels[x].y;
-                            }
-                        } else if (ny >= size && adjacency[face].bottom) {
-                            const [adjFace, adjEdge] = adjacency[face].bottom;
-                            const adjPixels = getEdgePixels(size, adjEdge);
-                            if (x < adjPixels.length) {
-                                adjacentFace = adjFace;
-                                adjacentX = adjPixels[x].x;
-                                adjacentY = adjPixels[x].y;
-                            }
-                        }
-                        
-                        if (adjacentFace && allFaceData[adjacentFace]) {
-                            const adjIdx = adjacentY * size + adjacentX;
-                            if (!allFaceData[adjacentFace].isWater[adjIdx]) {
-                                minSurroundingHeight = Math.min(minSurroundingHeight, allFaceData[adjacentFace].landData[adjIdx]);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            if (minSurroundingHeight < 11) {
-                const lakeHeight = Math.max(4, minSurroundingHeight);
-                for (const {face, idx} of waterBody) {
-                    allFaceData[face].waterData[idx] = lakeHeight;
-                }
-            }
-        }
-        // Large water bodies (oceans) are left unchanged
-    }
 }
 
 function getBiome(heightLevel, temperature, moisture) {
@@ -781,8 +295,7 @@ function generateFace(face, size, noise) {
             isWater[idx] = isWaterPixel ? 1 : 0;
             
             if (isWaterPixel) {
-                // Generate water depths (will be adjusted later for lakes)
-                // waterData[idx] = landHeight <= 0.1 ? 1 : (landHeight <= 0.2 ? 2 : 3);
+                // Generate water depths (simplified to single level)
                 waterData[idx] = 1;
                 landData[idx] = 0;
             } else {
@@ -832,9 +345,6 @@ function generateFace(face, size, noise) {
             }
         }
     }
-    
-    // Post-process ocean for more dramatic depth variation
-    // Note: Ocean depth enhancement is now done as a separate pass after all faces are generated
     
     // Combine water and land data into final height data
     for (let i = 0; i < size * size; i++) {
@@ -912,6 +422,903 @@ function generateFace(face, size, noise) {
     layers.isWater = isWater;
     
     return { heightData, biomeData, layers };
+}
+
+// Worker message handler
+self.addEventListener('message', function(e) {
+    const { face, size, seed, taskId } = e.data;
+    
+    try {
+        // Create noise generator with the provided seed
+        const noise = new Noise(seed);
+        
+        // Generate the face
+        const result = generateFace(face, size, noise);
+        
+        // Send result back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: true,
+            ...result
+        });
+        
+    } catch (error) {
+        // Send error back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: false,
+            error: error.message
+        });
+    }
+});
+`;
+
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    workerBlobURL = URL.createObjectURL(blob);
+    return workerBlobURL;
+}
+
+// Ocean worker blob URL creation
+let oceanWorkerBlobURL = null;
+function createOceanWorkerBlobURL() {
+    if (oceanWorkerBlobURL) return oceanWorkerBlobURL;
+    
+    const oceanWorkerCode = `
+// Ocean Depth Worker - Handles ocean depth enhancement for individual cube faces
+// This worker runs in a separate thread for parallel processing
+
+function enhanceOceanDepthsForSingleFace(faceData, size, distanceFromLandMap) {
+    const { waterData, isWater } = faceData;
+    const shallowWaterMinDistance = 2;
+    const shallowWaterMaxDistance = 15;
+    
+    // Apply depth levels based on distance from land
+    for (let pixelIndex = 0; pixelIndex < size * size; pixelIndex++) {
+        if (isWater[pixelIndex]) {
+            const distanceFromNearestLand = distanceFromLandMap[pixelIndex];
+            let oceanDepthLevel;
+            
+            if (distanceFromNearestLand <= shallowWaterMinDistance) {
+                oceanDepthLevel = 3; // Shallow water near shore
+            } else if (distanceFromNearestLand <= shallowWaterMaxDistance) {
+                const distanceRatio = (distanceFromNearestLand - shallowWaterMinDistance) / (shallowWaterMaxDistance - shallowWaterMinDistance);
+                oceanDepthLevel = distanceRatio < 0.5 ? 3 : 2; // Transitional depth
+            } else {
+                oceanDepthLevel = 1; // Deep ocean water
+            }
+            
+            waterData[pixelIndex] = oceanDepthLevel;
+        }
+    }
+    
+    return { waterData };
+}
+
+// Worker message handler
+self.addEventListener('message', function(e) {
+    const { face, faceData, size, distanceFromLandMap, taskId } = e.data;
+    
+    try {
+        // Process ocean depths for this face
+        const result = enhanceOceanDepthsForSingleFace(faceData, size, distanceFromLandMap);
+        
+        // Send result back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: true,
+            waterData: result.waterData
+        });
+        
+    } catch (error) {
+        // Send error back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: false,
+            error: error.message
+        });
+    }
+});
+`;
+    
+    const blob = new Blob([oceanWorkerCode], { type: 'application/javascript' });
+    oceanWorkerBlobURL = URL.createObjectURL(blob);
+    return oceanWorkerBlobURL;
+}
+
+// Lake worker blob URL creation
+let lakeWorkerBlobURL = null;
+function createLakeWorkerBlobURL() {
+    if (lakeWorkerBlobURL) return lakeWorkerBlobURL;
+    
+    const lakeWorkerCode = `
+// Lake Worker - Handles lake height adjustment processing for water bodies
+// This worker runs in a separate thread for parallel processing
+
+function processWaterBodiesForFace(faceData, waterBodies, size) {
+    const maxLakeSize = Math.max(20, size * size * 0.1);
+    const minLakeSize = 5;
+    const adjustments = [];
+    
+    // Process each water body that touches this face
+    for (const {waterBody, size: bodySize} of waterBodies) {
+        if (bodySize <= minLakeSize) {
+            // Mark small water bodies for removal
+            for (const {face, x, y, idx} of waterBody) {
+                adjustments.push({
+                    face,
+                    idx,
+                    action: 'remove',
+                    x,
+                    y
+                });
+            }
+        } else if (bodySize <= maxLakeSize) {
+            // Find minimum surrounding height for lake adjustment
+            let minSurroundingHeight = 11;
+            
+            for (const {face, x, y} of waterBody) {
+                // Check 4-connected neighbors for shore height
+                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    
+                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                        const nidx = ny * size + nx;
+                        if (!faceData.isWater[nidx]) {
+                            minSurroundingHeight = Math.min(minSurroundingHeight, faceData.landData[nidx]);
+                        }
+                    }
+                    // Note: Cross-face neighbor checking will be handled in main thread
+                }
+            }
+            
+            if (minSurroundingHeight < 11) {
+                const lakeHeight = Math.max(4, minSurroundingHeight);
+                for (const {face, idx} of waterBody) {
+                    adjustments.push({
+                        face,
+                        idx,
+                        action: 'adjust_height',
+                        height: lakeHeight
+                    });
+                }
+            }
+        }
+        // Large water bodies (oceans) are left unchanged
+    }
+    
+    return adjustments;
+}
+
+function findConnectedWaterBodiesInFace(faceData, size, startPositions) {
+    const { isWater } = faceData;
+    const visited = new Uint8Array(size * size);
+    const waterBodies = [];
+    
+    for (const {x: startX, y: startY} of startPositions) {
+        const startIdx = startY * size + startX;
+        
+        if (isWater[startIdx] && !visited[startIdx]) {
+            const waterBody = [];
+            const queue = [{x: startX, y: startY}];
+            
+            // Flood fill within this face only
+            while (queue.length > 0) {
+                const {x, y} = queue.shift();
+                const idx = y * size + x;
+                
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+                waterBody.push({x, y, idx});
+                
+                // Check 4-connected neighbors within same face
+                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    
+                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                        const nidx = ny * size + nx;
+                        if (isWater[nidx] && !visited[nidx]) {
+                            queue.push({x: nx, y: ny});
+                        }
+                    }
+                }
+            }
+            
+            waterBodies.push({waterBody, size: waterBody.length});
+        }
+    }
+    
+    return waterBodies;
+}
+
+// Worker message handler
+self.addEventListener('message', function(e) {
+    const { face, faceData, size, taskId, mode, waterBodies, startPositions } = e.data;
+    
+    try {
+        let result;
+        
+        if (mode === 'find_water_bodies') {
+            // Find water bodies within this face
+            result = findConnectedWaterBodiesInFace(faceData, size, startPositions);
+        } else if (mode === 'process_adjustments') {
+            // Process water body adjustments
+            result = processWaterBodiesForFace(faceData, waterBodies, size);
+        }
+        
+        // Send result back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: true,
+            mode,
+            result
+        });
+        
+    } catch (error) {
+        // Send error back to main thread
+        self.postMessage({
+            taskId,
+            face,
+            success: false,
+            error: error.message
+        });
+    }
+});
+`;
+    
+    const blob = new Blob([lakeWorkerCode], { type: 'application/javascript' });
+    lakeWorkerBlobURL = URL.createObjectURL(blob);
+    return lakeWorkerBlobURL;
+}
+
+// Initialize worker pool
+function initializeWorkers() {
+    // Create worker blob URL to avoid CORS issues
+    const workerURL = createWorkerBlobURL();
+    
+    // Create 6 workers (one per face)
+    for (let i = 0; i < 6; i++) {
+        const worker = new Worker(workerURL);
+        workerPool.push(worker);
+    }
+}
+
+// Clean up workers
+function terminateWorkers() {
+    workerPool.forEach(worker => worker.terminate());
+    workerPool = [];
+}
+
+// Generate face using web worker
+function generateFaceWithWorker(face, size, seed) {
+    return new Promise((resolve, reject) => {
+        const taskId = ++taskCounter;
+        const workerIndex = ['front', 'back', 'left', 'right', 'top', 'bottom'].indexOf(face);
+        const worker = workerPool[workerIndex];
+        
+        // Set up message handler for this task
+        const messageHandler = (e) => {
+            const { taskId: responseTaskId, success, face: responseFace, error, ...result } = e.data;
+            
+            // Check if this response is for our task
+            if (responseTaskId === taskId && responseFace === face) {
+                worker.removeEventListener('message', messageHandler);
+                
+                if (success) {
+                    resolve(result);
+                } else {
+                    reject(new Error(error));
+                }
+            }
+        };
+        
+        worker.addEventListener('message', messageHandler);
+        
+        // Send task to worker
+        worker.postMessage({ face, size, seed, taskId });
+        
+        // Set up timeout to prevent hanging
+        setTimeout(() => {
+            worker.removeEventListener('message', messageHandler);
+            reject(new Error(`Worker timeout for face: ${face}`));
+        }, 30000); // 30 second timeout
+    });
+}
+
+// Cross-face BFS distance calculation - runs in main thread for coordination
+function calculateDistanceFromLand(allFaceData, size) {
+    const faceAdjacency = getCubeFaceAdjacency();
+    const shallowWaterMaxDistance = 15;
+    const maximumSearchRadius = Math.min(shallowWaterMaxDistance + 5, size / 4);
+    
+    // Create global distance maps and BFS queue for all faces
+    const distanceFromLandMap = {};
+    const breadthFirstSearchQueue = [];
+    
+    // Initialize distance maps for all faces and find land pixels as starting points
+    Object.keys(allFaceData).forEach(currentFace => {
+        const { isWater } = allFaceData[currentFace];
+        distanceFromLandMap[currentFace] = new Float32Array(size * size);
+        
+        for (let pixelRow = 0; pixelRow < size; pixelRow++) {
+            for (let pixelColumn = 0; pixelColumn < size; pixelColumn++) {
+                const pixelIndex = pixelRow * size + pixelColumn;
+                
+                if (isWater[pixelIndex]) {
+                    distanceFromLandMap[currentFace][pixelIndex] = Infinity;
+                } else {
+                    // Land pixels start with distance 0
+                    distanceFromLandMap[currentFace][pixelIndex] = 0;
+                    breadthFirstSearchQueue.push({face: currentFace, x: pixelColumn, y: pixelRow, dist: 0});
+                }
+            }
+        }
+    });
+    
+    if (breadthFirstSearchQueue.length === 0) return distanceFromLandMap;
+    
+    // Cross-face breadth-first search for distance calculation
+    let currentQueuePosition = 0;
+    while (currentQueuePosition < breadthFirstSearchQueue.length) {
+        const {face: currentFace, x: currentPixelX, y: currentPixelY, dist: currentDistance} = breadthFirstSearchQueue[currentQueuePosition++];
+        
+        // Check 8-connected neighbors (including cross-face)
+        for (let rowOffset = -1; rowOffset <= 1; rowOffset++) {
+            for (let columnOffset = -1; columnOffset <= 1; columnOffset++) {
+                if (columnOffset === 0 && rowOffset === 0) continue;
+                
+                const neighborX = currentPixelX + columnOffset;
+                const neighborY = currentPixelY + rowOffset;
+                const newDistanceToLand = currentDistance + Math.sqrt(columnOffset * columnOffset + rowOffset * rowOffset);
+                
+                // Handle within-face neighbors
+                if (neighborX >= 0 && neighborX < size && neighborY >= 0 && neighborY < size) {
+                    const neighborPixelIndex = neighborY * size + neighborX;
+                    
+                    if (allFaceData[currentFace].isWater[neighborPixelIndex] && newDistanceToLand < distanceFromLandMap[currentFace][neighborPixelIndex]) {
+                        distanceFromLandMap[currentFace][neighborPixelIndex] = newDistanceToLand;
+                        if (newDistanceToLand <= maximumSearchRadius) {
+                            breadthFirstSearchQueue.push({face: currentFace, x: neighborX, y: neighborY, dist: newDistanceToLand});
+                        }
+                    }
+                } else {
+                    // Handle cross-face neighbors - only allow cardinal directions (no diagonals across edges)
+                    let crossFaceAdjacentFace = null;
+                    let crossFaceAdjacentX = -1, crossFaceAdjacentY = -1;
+                    let sourceEdgeIndex = -1, targetEdgeIndex = -1;
+                    
+                    // Only process cardinal directions (columnOffset=0 OR rowOffset=0, not both non-zero)
+                    const isCardinalDirection = (columnOffset === 0) !== (rowOffset === 0); // XOR: exactly one is zero
+
+                    if (isCardinalDirection) {
+                        if (neighborX < 0) {
+                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].left;
+                            crossFaceAdjacentFace = adjacentFaceName;
+                            sourceEdgeIndex = 3;
+                            targetEdgeIndex = adjacentFaceEdgeIndex;
+                        } else if (neighborX >= size) {
+                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].right;
+                            crossFaceAdjacentFace = adjacentFaceName;
+                            sourceEdgeIndex = 1;
+                            targetEdgeIndex = adjacentFaceEdgeIndex;
+                        } else if (neighborY < 0) {
+                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].top;
+                            crossFaceAdjacentFace = adjacentFaceName;
+                            sourceEdgeIndex = 0;
+                            targetEdgeIndex = adjacentFaceEdgeIndex;
+                        } else if (neighborY >= size) {
+                            const [adjacentFaceName, adjacentFaceEdgeIndex] = faceAdjacency[currentFace].bottom;
+                            crossFaceAdjacentFace = adjacentFaceName;
+                            sourceEdgeIndex = 2;
+                            targetEdgeIndex = adjacentFaceEdgeIndex;
+                        } else {
+                            console.log("shouldn't ever get here");
+                            continue;
+                        }
+
+                        crossFaceAdjacentX = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).x;
+                        crossFaceAdjacentY = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).y;
+                        
+                        const adjacentPixelIndex = crossFaceAdjacentY * size + crossFaceAdjacentX;
+                        const adjacentFaceData = allFaceData[crossFaceAdjacentFace];
+                        
+                        if (adjacentFaceData.isWater[adjacentPixelIndex] && newDistanceToLand < distanceFromLandMap[crossFaceAdjacentFace][adjacentPixelIndex]) {
+                            distanceFromLandMap[crossFaceAdjacentFace][adjacentPixelIndex] = newDistanceToLand;
+                            if (newDistanceToLand <= maximumSearchRadius) {
+                                breadthFirstSearchQueue.push({face: crossFaceAdjacentFace, x: crossFaceAdjacentX, y: crossFaceAdjacentY, dist: newDistanceToLand});
+                            }
+                        }
+                    }
+                    // Diagonal movements that would cross face boundaries are ignored
+                }
+            }
+        }
+    }
+    
+    return distanceFromLandMap;
+}
+
+// Parallel ocean depth enhancement using workers
+async function enhanceOceanDepths(allFaceData, size) {
+    console.log('Calculating cross-face distance maps...');
+    
+    // Step 1: Calculate distance from land using cross-face BFS in main thread
+    const distanceFromLandMap = calculateDistanceFromLand(allFaceData, size);
+    
+    console.log('Processing ocean depths in parallel...');
+    
+    // Step 2: Process ocean depths in parallel using workers
+    const faces = Object.keys(allFaceData);
+    const oceanWorkers = [];
+    const oceanPromises = [];
+    
+    // Create ocean workers with blob URLs to avoid CORS
+    const oceanWorkerURL = createOceanWorkerBlobURL();
+    
+    for (let i = 0; i < faces.length; i++) {
+        const worker = new Worker(oceanWorkerURL);
+        oceanWorkers.push(worker);
+        
+        const face = faces[i];
+        const taskId = `ocean_${face}_${Date.now()}_${Math.random()}`;
+        
+        const promise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error(`Ocean worker timeout for face ${face}`));
+            }, 30000);
+            
+            worker.onmessage = function(e) {
+                clearTimeout(timeout);
+                if (e.data.success) {
+                    resolve({face, waterData: e.data.waterData});
+                } else {
+                    reject(new Error(`Ocean worker error for ${face}: ${e.data.error}`));
+                }
+            };
+            
+            worker.onerror = function(error) {
+                clearTimeout(timeout);
+                reject(new Error(`Ocean worker error for ${face}: ${error.message}`));
+            };
+        });
+        
+        oceanPromises.push(promise);
+        
+        // Send task to worker
+        worker.postMessage({
+            taskId,
+            face,
+            faceData: allFaceData[face],
+            size,
+            distanceFromLandMap: distanceFromLandMap[face]
+        });
+    }
+    
+    // Wait for all ocean processing to complete
+    const oceanResults = await Promise.all(oceanPromises);
+    
+    // Apply results
+    oceanResults.forEach(({face, waterData}) => {
+        allFaceData[face].waterData = waterData;
+    });
+    
+    // Clean up workers
+    oceanWorkers.forEach(worker => {
+        worker.terminate();
+    });
+    URL.revokeObjectURL(oceanWorkerURL);
+    oceanWorkerBlobURL = null; // Reset so new URL is created next time
+}
+
+function getCubeFaceAdjacency() {
+    // Define how cube faces connect to each other
+    // Each edge is defined as [face, edge] where edge is 0=top, 1=right, 2=bottom, 3=left
+    const topEdge = 0;
+    const rightEdge = 1;
+    const bottomEdge = 2;
+    const leftEdge = 3
+    return {
+        'front': {
+            top: ['top', bottomEdge],      // Front top -> Top bottom
+            right: ['right', leftEdge],  // Front right -> Right left  
+            bottom: ['bottom', topEdge], // Front bottom -> Bottom top
+            left: ['left', rightEdge]     // Front left -> Left right
+        },
+        'back': {
+            top: ['top', topEdge],      // Back top -> Top top
+            right: ['left', leftEdge],   // Back right -> Left left
+            bottom: ['bottom', bottomEdge], // Back bottom -> Bottom bottom  
+            left: ['right', rightEdge]    // Back left -> Right right
+        },
+        'right': {
+            top: ['top', rightEdge],      // Right top -> Top right
+            right: ['back', leftEdge],   // Right right -> Back left
+            bottom: ['bottom', rightEdge], // Right bottom -> Bottom right
+            left: ['front', rightEdge]    // Right left -> Front right
+        },
+        'left': {
+            top: ['top', leftEdge],      // Left top -> Top left
+            right: ['front', leftEdge],  // Left right -> Front left
+            bottom: ['bottom', leftEdge], // Left bottom -> Bottom left
+            left: ['back', rightEdge]     // Left left -> Back right
+        },
+        'top': {
+            top: ['back', topEdge],     // Top top -> Back top
+            right: ['right', topEdge],  // Top right -> Right top
+            bottom: ['front', topEdge], // Top bottom -> Front top
+            left: ['left', topEdge]     // Top left -> Left top
+        },
+        'bottom': {
+            top: ['front', bottomEdge],    // Bottom top -> Front bottom
+            right: ['right', bottomEdge],  // Bottom right -> Right bottom
+            bottom: ['back', bottomEdge],  // Bottom bottom -> Back bottom
+            left: ['left', bottomEdge]     // Bottom left -> Left bottom
+        }
+    };
+}
+
+function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFaceName, sourceEdgeIndex) {
+    // Transform pixel location when crossing edges
+    // This accounts for the different orientations of cube faces
+    
+    // Create a key to identify the specific face transition
+    const faceTransitionKey = `${sourceFaceName}-${sourceEdgeIndex}`;
+
+    const sizeAdjusted = size - 1;
+    
+    // Define transformations for specific face transitions based on cube topology
+    switch (faceTransitionKey) {
+        // Front face transitions
+        case 'front-0':     // front top -> top bottom
+            return {x: sourcePixelX, y: sizeAdjusted};
+        case 'front-1':   // front right -> right left  
+            return {x: 0, y: sourcePixelY};
+        case 'front-2':  // front bottom -> bottom top
+            return {x: sourcePixelX, y: 0};
+        case 'front-3':    // front left -> left right
+            return {x: sizeAdjusted, y: sourcePixelY};
+            
+        // Right face transitions  
+        case 'right-0':     // right top -> top right
+            return {x: sizeAdjusted, y: size - sourcePixelX};
+        case 'right-1':    // right right -> back left
+            return {x: 0, y: sourcePixelY};
+        case 'right-2':  // right bottom -> bottom right  
+            return {x: sizeAdjusted, y: sourcePixelX};
+        case 'right-3':   // right left -> front right
+            return {x: sizeAdjusted, y: sourcePixelY};
+            
+        // Back face transitions
+        case 'back-0':      // back top -> top top
+            return {x: size - sourcePixelX, y: 0};
+        case 'back-1':     // back right -> left left
+            return {x: 0, y: sourcePixelY};
+        case 'back-2':   // back bottom -> bottom bottom
+            return {x: size - sourcePixelX, y: sizeAdjusted};
+        case 'back-3':    // back left -> right right
+            return {x: sizeAdjusted, y: sourcePixelY};
+            
+        // Left face transitions
+        case 'left-0':      // left top -> top left
+            return {x: 0, y: sourcePixelX};
+        case 'left-1':    // left right -> front left
+            return {x: 0, y: sourcePixelY};  
+        case 'left-2':   // left bottom -> bottom left
+            return {x: 0, y: size - sourcePixelX};
+        case 'left-3':     // left left -> back right
+            return {x: sizeAdjusted, y: sourcePixelY};
+            
+        // Top face transitions
+        case 'top-0':      // top top -> back top
+            return {x: size - sourcePixelX, y: 0};
+        case 'top-1':     // top right -> right top
+            return {x: size - sourcePixelY, y: 0};
+        case 'top-2':     // top bottom -> front top
+            return {x: sourcePixelX, y: 0};
+        case 'top-3':      // top left -> left top
+            return {x: sourcePixelY, y: 0};
+            
+        // Bottom face transitions
+        case 'bottom-0':  // bottom top -> front bottom
+            return {x: sourcePixelX, y: sizeAdjusted};
+        case 'bottom-1':  // bottom right -> right bottom  
+            return {x: sourcePixelY, y: sizeAdjusted};
+        case 'bottom-2':   // bottom bottom -> back bottom
+            return {x: size - sourcePixelX, y: sizeAdjusted};
+        case 'bottom-3':   // bottom left -> left bottom
+            return {x: size - sourcePixelY, y: sizeAdjusted};
+            
+        default:
+            // If we don't have a specific transformation, return original direction
+            // This should not happen in a proper cube topology
+            console.warn(`No direction transformation defined for ${faceTransitionKey}`);
+            return {x: columnOffset, y: rowOffset};
+    }
+}
+
+function getEdgePixels(faceSize, edgeIndex) {
+    // Get pixel coordinates for each edge of a face
+    const edgePixelCoordinates = [];
+    switch(edgeIndex) {
+        case 0: // top edge
+            for (let columnIndex = 0; columnIndex < faceSize; columnIndex++) {
+                edgePixelCoordinates.push({x: columnIndex, y: 0});
+            }
+            break;
+        case 1: // right edge  
+            for (let rowIndex = 0; rowIndex < faceSize; rowIndex++) {
+                edgePixelCoordinates.push({x: faceSize-1, y: rowIndex});
+            }
+            break;
+        case 2: // bottom edge
+            for (let columnIndex = 0; columnIndex < faceSize; columnIndex++) {
+                edgePixelCoordinates.push({x: columnIndex, y: faceSize-1});
+            }
+            break;
+        case 3: // left edge
+            for (let rowIndex = 0; rowIndex < faceSize; rowIndex++) {
+                edgePixelCoordinates.push({x: 0, y: rowIndex});
+            }
+            break;
+    }
+    return edgePixelCoordinates;
+}
+
+// Parallel lake height adjustment using cross-face coordination
+async function adjustLakeHeights(allFaceData, size) {
+    console.log('Finding connected water bodies across faces...');
+    
+    // Step 1: Find all connected water bodies using cross-face flood fill in main thread
+    const adjacency = getCubeFaceAdjacency();
+    const maxLakeSize = Math.max(20, size * size * 0.1);
+    const minLakeSize = 5;
+    const globalVisited = {};
+    const waterBodies = [];
+    
+    // Initialize global visited tracking
+    Object.keys(allFaceData).forEach(face => {
+        globalVisited[face] = new Uint8Array(size * size);
+    });
+    
+    // Find all connected water bodies across faces
+    for (const startFace of Object.keys(allFaceData)) {
+        const { isWater } = allFaceData[startFace];
+        
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const idx = y * size + x;
+                
+                if (isWater[idx] && !globalVisited[startFace][idx]) {
+                    const waterBody = [];
+                    const queue = [{face: startFace, x, y}];
+                    
+                    // Cross-face flood fill
+                    while (queue.length > 0) {
+                        const {face, x: cx, y: cy} = queue.shift();
+                        const cidx = cy * size + cx;
+                        
+                        if (globalVisited[face][cidx]) continue;
+                        globalVisited[face][cidx] = 1;
+                        waterBody.push({face, x: cx, y: cy, idx: cidx});
+                        
+                        const faceData = allFaceData[face];
+                        
+                        // Check neighbors within same face
+                        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                            const nx = cx + dx;
+                            const ny = cy + dy;
+                            
+                            if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                                const nidx = ny * size + nx;
+                                if (faceData.isWater[nidx] && !globalVisited[face][nidx]) {
+                                    queue.push({face, x: nx, y: ny});
+                                }
+                            } else {
+                                // Check cross-face connections
+                                let adjacentFace = null;
+                                let adjacentX = -1, adjacentY = -1;
+                                
+                                if (nx < 0 && adjacency[face].left) {
+                                    const [adjFace, adjEdge] = adjacency[face].left;
+                                    const adjPixels = getEdgePixels(size, adjEdge);
+                                    if (cy < adjPixels.length) {
+                                        adjacentFace = adjFace;
+                                        adjacentX = adjPixels[cy].x;
+                                        adjacentY = adjPixels[cy].y;
+                                    }
+                                } else if (nx >= size && adjacency[face].right) {
+                                    const [adjFace, adjEdge] = adjacency[face].right;
+                                    const adjPixels = getEdgePixels(size, adjEdge);
+                                    if (cy < adjPixels.length) {
+                                        adjacentFace = adjFace;
+                                        adjacentX = adjPixels[cy].x;
+                                        adjacentY = adjPixels[cy].y;
+                                    }
+                                } else if (ny < 0 && adjacency[face].top) {
+                                    const [adjFace, adjEdge] = adjacency[face].top;
+                                    const adjPixels = getEdgePixels(size, adjEdge);
+                                    if (cx < adjPixels.length) {
+                                        adjacentFace = adjFace;
+                                        adjacentX = adjPixels[cx].x;
+                                        adjacentY = adjPixels[cx].y;
+                                    }
+                                } else if (ny >= size && adjacency[face].bottom) {
+                                    const [adjFace, adjEdge] = adjacency[face].bottom;
+                                    const adjPixels = getEdgePixels(size, adjEdge);
+                                    if (cx < adjPixels.length) {
+                                        adjacentFace = adjFace;
+                                        adjacentX = adjPixels[cx].x;
+                                        adjacentY = adjPixels[cx].y;
+                                    }
+                                }
+                                
+                                if (adjacentFace && allFaceData[adjacentFace]) {
+                                    const adjIdx = adjacentY * size + adjacentX;
+                                    if (allFaceData[adjacentFace].isWater[adjIdx] && !globalVisited[adjacentFace][adjIdx]) {
+                                        queue.push({face: adjacentFace, x: adjacentX, y: adjacentY});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    waterBodies.push({waterBody, size: waterBody.length});
+                }
+            }
+        }
+    }
+    
+    console.log(`Found ${waterBodies.length} water bodies, applying adjustments...`);
+    
+    // Step 2: Process water bodies with cross-face coordination in main thread
+    // (This requires cross-face neighbor checking which is complex to parallelize)
+    for (const {waterBody, size: bodySize} of waterBodies) {
+        if (bodySize <= minLakeSize) {
+            // Remove really small water bodies by converting to land
+            for (const {face, x, y, idx} of waterBody) {
+                const faceData = allFaceData[face];
+                
+                // Find average surrounding land height (8-connected for better sampling)
+                let landHeights = [];
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        
+                        if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                            const nidx = ny * size + nx;
+                            if (!faceData.isWater[nidx]) {
+                                landHeights.push(faceData.landData[nidx]);
+                            }
+                        }
+                    }
+                }
+                
+                if (landHeights.length > 0) {
+                    const avgHeight = Math.round(landHeights.reduce((a, b) => a + b, 0) / landHeights.length);
+                    
+                    // Convert water pixel to land
+                    faceData.isWater[idx] = 0;
+                    faceData.waterData[idx] = 0;
+                    faceData.landData[idx] = avgHeight;
+                }
+            }
+        } else if (bodySize <= maxLakeSize) {
+            // Adjust lake heights for medium-sized water bodies
+            let minSurroundingHeight = 11;
+            
+            for (const {face, x, y} of waterBody) {
+                const faceData = allFaceData[face];
+                
+                // Check only 4-connected neighbors for shore height
+                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    
+                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                        const nidx = ny * size + nx;
+                        if (!faceData.isWater[nidx]) {
+                            minSurroundingHeight = Math.min(minSurroundingHeight, faceData.landData[nidx]);
+                        }
+                    } else {
+                        // Handle cross-face neighbors
+                        let adjacentFace = null;
+                        let adjacentX = -1, adjacentY = -1;
+                        
+                        if (nx < 0 && adjacency[face].left) {
+                            const [adjFace, adjEdge] = adjacency[face].left;
+                            const adjPixels = getEdgePixels(size, adjEdge);
+                            if (y < adjPixels.length) {
+                                adjacentFace = adjFace;
+                                adjacentX = adjPixels[y].x;
+                                adjacentY = adjPixels[y].y;
+                            }
+                        } else if (nx >= size && adjacency[face].right) {
+                            const [adjFace, adjEdge] = adjacency[face].right;
+                            const adjPixels = getEdgePixels(size, adjEdge);
+                            if (y < adjPixels.length) {
+                                adjacentFace = adjFace;
+                                adjacentX = adjPixels[y].x;
+                                adjacentY = adjPixels[y].y;
+                            }
+                        } else if (ny < 0 && adjacency[face].top) {
+                            const [adjFace, adjEdge] = adjacency[face].top;
+                            const adjPixels = getEdgePixels(size, adjEdge);
+                            if (x < adjPixels.length) {
+                                adjacentFace = adjFace;
+                                adjacentX = adjPixels[x].x;
+                                adjacentY = adjPixels[x].y;
+                            }
+                        } else if (ny >= size && adjacency[face].bottom) {
+                            const [adjFace, adjEdge] = adjacency[face].bottom;
+                            const adjPixels = getEdgePixels(size, adjEdge);
+                            if (x < adjPixels.length) {
+                                adjacentFace = adjFace;
+                                adjacentX = adjPixels[x].x;
+                                adjacentY = adjPixels[x].y;
+                            }
+                        }
+                        
+                        if (adjacentFace && allFaceData[adjacentFace]) {
+                            const adjIdx = adjacentY * size + adjacentX;
+                            if (!allFaceData[adjacentFace].isWater[adjIdx]) {
+                                minSurroundingHeight = Math.min(minSurroundingHeight, allFaceData[adjacentFace].landData[adjIdx]);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (minSurroundingHeight < 11) {
+                const lakeHeight = Math.max(4, minSurroundingHeight);
+                for (const {face, idx} of waterBody) {
+                    allFaceData[face].waterData[idx] = lakeHeight;
+                }
+            }
+        }
+        // Large water bodies (oceans) are left unchanged
+    }
+}
+
+function getBiome(heightLevel, temperature, moisture) {
+    // Exactly 10 colors based on height levels 1-10
+    // Enhanced ocean depths: Level 1 (deep), Level 2 (medium), Level 3 (shallow)
+    
+    const colors = [
+        null, // Index 0 unused
+        [5, 15, 60],    // Level 1: Deep ocean (very dark blue)
+        [15, 35, 90],   // Level 2: Medium ocean (medium blue)
+        [30, 60, 130],  // Level 3: Shallow ocean (lighter blue)
+        [220, 200, 160], // Level 4: Beach/coastal (sandy)
+        [120, 180, 80],  // Level 5: Lowlands/plains (green)
+        [100, 150, 70],  // Level 6: Hills (darker green)
+        [140, 120, 80],  // Level 7: Highlands (brown-green)
+        [160, 140, 100], // Level 8: Mountains (brown)
+        [180, 160, 140], // Level 9: High mountains (gray-brown)
+        [240, 240, 250]  // Level 10: Snow peaks (white)
+    ];
+    
+    // Return the exact color for this height level
+    return colors[heightLevel] || [0, 0, 0];
+}
+
+// Function to rotate 3D coordinates by given angle around Z axis
+function rotateCoordinates(x, y, z, angleRadians) {
+    const cos = Math.cos(angleRadians);
+    const sin = Math.sin(angleRadians);
+    return {
+        x: x * cos - y * sin,
+        y: x * sin + y * cos,
+        z: z
+    };
 }
 
 function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
@@ -1160,147 +1567,157 @@ async function generate() {
     updateQueryParams(seed, size);
     
     addToRecentSeeds(seed, size);
-    const noise = new Noise(seed);
     
     const faces = ['front', 'back', 'left', 'right', 'top', 'bottom'];
     currentData = {};
     const allFaceData = {};
     
-    // Helper function to yield control back to browser
-    function yieldToMain() {
-        return new Promise(resolve => setTimeout(resolve, 0));
-    }
-    
-    // First pass: Generate all face terrain data and render initial results
-    for (let i = 0; i < faces.length; i++) {
-        const face = faces[i];
-        
-        // Yield to main thread after each face to prevent blocking
-        if (i > 0) {
-            await yieldToMain();
+    try {
+        // Initialize workers if not already done
+        if (workerPool.length === 0) {
+            initializeWorkers();
         }
         
-        const data = generateFace(face, size, noise);
-        currentData[face] = data;
+        // First pass: Generate all face terrain data in parallel using workers
+        console.log('Starting parallel face generation...');
+        const facePromises = faces.map(face => generateFaceWithWorker(face, size, seed));
+        const faceResults = await Promise.all(facePromises);
         
-        // Store face data for cross-face lake detection
-        allFaceData[face] = {
-            waterData: data.layers.water,
-            landData: data.layers.land,
-            isWater: data.layers.isWater
-        };
+        console.log('Face generation completed, processing results...');
         
-        // Store layers from front face for layer visualization
-        if (face === 'front') {
-            currentLayers = data.layers;
-        }
-        
-        // Render initial terrain (before ocean enhancement)
-        const canvas = document.getElementById(face);
-        render(canvas, data.heightData, data.biomeData, size, currentView, data.layers.isWater, data.layers.water);
-    }
-    
-    // Yield before second pass
-    await yieldToMain();
-    
-    // Second pass: Enhance ocean depths across all faces, then adjust lake heights
-    enhanceOceanDepths(allFaceData, size);
-    adjustLakeHeights(allFaceData, size);
-    
-    // Yield after ocean enhancement
-    await yieldToMain();
-    
-    // Third pass: Update final heightData and render with enhanced ocean depths
-    for (let i = 0; i < faces.length; i++) {
-        const face = faces[i];
-        
-        // Yield to main thread after each face to prevent blocking
-        if (i > 0) {
-            await yieldToMain();
-        }
-        
-        const data = currentData[face];
-        const faceData = allFaceData[face];
-        
-        // Update final height data with enhanced ocean depths and adjusted lake heights
-        for (let j = 0; j < size * size; j++) {
-            if (faceData.isWater[j]) {
-                data.heightData[j] = faceData.waterData[j] / 10;
-            } else {
-                data.heightData[j] = faceData.landData[j] / 10;
+        // Process results and render initial terrain
+        for (let i = 0; i < faces.length; i++) {
+            const face = faces[i];
+            const result = faceResults[i];
+            
+            currentData[face] = result;
+            
+            // Store face data for cross-face lake detection
+            allFaceData[face] = {
+                waterData: result.layers.water,
+                landData: result.layers.land,
+                isWater: result.layers.isWater
+            };
+            
+            // Store layers from front face for layer visualization
+            if (face === 'front') {
+                currentLayers = result.layers;
             }
+            
+            // Render initial terrain (before ocean enhancement)
+            const canvas = document.getElementById(face);
+            render(canvas, result.heightData, result.biomeData, size, currentView, result.layers.isWater, result.layers.water);
         }
         
-        // Update layers with enhanced data
-        data.layers.water = faceData.waterData;
-        data.layers.land = faceData.landData;
-        data.layers.isWater = faceData.isWater;
+        console.log('Starting parallel ocean and lake processing...');
         
-        // Regenerate biome data with enhanced ocean depths and correct lake classifications
-        const biomeData = new Uint8ClampedArray(size * size * 4);
+        // Second pass: Run ocean depths and lake heights in parallel
+        await Promise.all([
+            enhanceOceanDepths(allFaceData, size),
+            adjustLakeHeights(allFaceData, size)
+        ]);
         
-        // Calculate feature scales for biome generation
-        const climateScale = size / 100;
-        const precipScale = size / 80;
+        console.log('Ocean enhancement completed, final rendering...');
         
-        for (let j = 0; j < size * size; j++) {
-            if (faceData.isWater[j]) {
-                const actualWaterHeight = Math.round(faceData.waterData[j]);
-                let waterColorLevel;
-                
-                if (actualWaterHeight <= 3) {
-                    waterColorLevel = actualWaterHeight;
+        // Third pass: Update final heightData and render with enhanced ocean depths
+        for (let i = 0; i < faces.length; i++) {
+            const face = faces[i];
+            const data = currentData[face];
+            const faceData = allFaceData[face];
+            
+            // Update final height data with enhanced ocean depths and adjusted lake heights
+            for (let j = 0; j < size * size; j++) {
+                if (faceData.isWater[j]) {
+                    data.heightData[j] = faceData.waterData[j] / 10;
                 } else {
-                    waterColorLevel = 3;
+                    data.heightData[j] = faceData.landData[j] / 10;
                 }
-                
-                const biome = getBiome(waterColorLevel, 0, 1);
-                
-                const biomeIdx = j * 4;
-                biomeData[biomeIdx] = biome[0];
-                biomeData[biomeIdx + 1] = biome[1];
-                biomeData[biomeIdx + 2] = biome[2];
-                biomeData[biomeIdx + 3] = 255;
-            } else {
-                // For land pixels (including converted small water bodies), regenerate biome
-                const y = Math.floor(j / size);
-                const x = j % size;
-                const u = x / (size - 1);
-                const v = y / (size - 1);
-                const coord = getCubeCoords(face, u, v);
-                const finalHeight = Math.round(faceData.landData[j]);
-                
-                // Generate climate for land biome
-                let latitude = Math.abs(coord.y);
-                let baseTemp = 1.0 - latitude * 0.8;
-                const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
-                
-                // Climate noise - 300 degree rotation
-                const climateRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 10);
-                const tempNoise = noise.fbm(climateRotated.x * climateScale + 900, climateRotated.y * climateScale + 900, climateRotated.z * climateScale + 900, 3) * 0.3;
-                const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
-                
-                // Precipitation noise - 330 degree rotation
-                const precipRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 11);
-                const precipitation = noise.fbm(precipRotated.x * precipScale + 1000, precipRotated.y * precipScale + 1000, precipRotated.z * precipScale + 1000, 3);
-                const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
-                const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
-                
-                const biome = getBiome(finalHeight, temperature, moisture);
-                
-                const biomeIdx = j * 4;
-                biomeData[biomeIdx] = biome[0];
-                biomeData[biomeIdx + 1] = biome[1];
-                biomeData[biomeIdx + 2] = biome[2];
-                biomeData[biomeIdx + 3] = 255;
             }
+            
+            // Update layers with enhanced data
+            data.layers.water = faceData.waterData;
+            data.layers.land = faceData.landData;
+            data.layers.isWater = faceData.isWater;
+            
+            // Regenerate biome data with enhanced ocean depths and correct lake classifications
+            const biomeData = new Uint8ClampedArray(size * size * 4);
+            
+            // Calculate feature scales for biome generation
+            const climateScale = size / 100;
+            const precipScale = size / 80;
+            
+            for (let j = 0; j < size * size; j++) {
+                if (faceData.isWater[j]) {
+                    const actualWaterHeight = Math.round(faceData.waterData[j]);
+                    let waterColorLevel;
+                    
+                    if (actualWaterHeight <= 3) {
+                        waterColorLevel = actualWaterHeight;
+                    } else {
+                        waterColorLevel = 3;
+                    }
+                    
+                    const biome = getBiome(waterColorLevel, 0, 1);
+                    
+                    const biomeIdx = j * 4;
+                    biomeData[biomeIdx] = biome[0];
+                    biomeData[biomeIdx + 1] = biome[1];
+                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx + 3] = 255;
+                } else {
+                    // For land pixels (including converted small water bodies), regenerate biome
+                    const y = Math.floor(j / size);
+                    const x = j % size;
+                    const u = x / (size - 1);
+                    const v = y / (size - 1);
+                    
+                    // We need getCubeCoords but it's in the worker - let's recreate it here for biome generation
+                    const s = u * 2 - 1;
+                    const t = v * 2 - 1;
+                    let cx, cy, cz;
+                    
+                    switch(face) {
+                        case 'front': cx = s; cy = -t; cz = 1; break;
+                        case 'back': cx = -s; cy = -t; cz = -1; break;
+                        case 'right': cx = 1; cy = -t; cz = -s; break;
+                        case 'left': cx = -1; cy = -t; cz = s; break;
+                        case 'top': cx = s; cy = 1; cz = t; break;
+                        case 'bottom': cx = s; cy = -1; cz = -t; break;
+                    }
+                    
+                    const len = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                    const coord = { x: cx/len, y: cy/len, z: cz/len };
+                    const finalHeight = Math.round(faceData.landData[j]);
+                    
+                    // Generate climate for land biome (simplified version)
+                    let latitude = Math.abs(coord.y);
+                    let baseTemp = 1.0 - latitude * 0.8;
+                    const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
+                    const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling));
+                    const moisture = Math.max(0, Math.min(1, 0.5));
+                    
+                    const biome = getBiome(finalHeight, temperature, moisture);
+                    
+                    const biomeIdx = j * 4;
+                    biomeData[biomeIdx] = biome[0];
+                    biomeData[biomeIdx + 1] = biome[1];
+                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx + 3] = 255;
+                }
+            }
+            
+            data.biomeData = biomeData;
+            
+            // Final render with enhanced ocean depths
+            const canvas = document.getElementById(face);
+            render(canvas, data.heightData, data.biomeData, size, currentView, faceData.isWater, faceData.waterData);
         }
         
-        data.biomeData = biomeData;
+        console.log('Generation completed successfully!');
         
-        // Final render with enhanced ocean depths
-        const canvas = document.getElementById(face);
-        render(canvas, data.heightData, data.biomeData, size, currentView, faceData.isWater, faceData.waterData);
+    } catch (error) {
+        console.error('Error during generation:', error);
+        alert('Error during generation: ' + error.message);
     }
 }
 
@@ -1456,4 +1873,9 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('seed').value = initialSeed;
     
     generate();
+});
+
+// Clean up workers when page unloads
+window.addEventListener('beforeunload', function() {
+    terminateWorkers();
 });
