@@ -1155,6 +1155,9 @@ function generate() {
     const seedInput = document.getElementById('seed').value.trim();
     const seed = seedInput || Math.random().toString(36).substr(2, 9);
     
+    // Update URL with current seed and size
+    updateQueryParams(seed, size);
+    
     addToRecentSeeds(seed, size);
     const noise = new Noise(seed);
     
@@ -1377,11 +1380,49 @@ function downloadCubeNet() {
     }
 }
 
+// Parse query parameters from URL
+function getQueryParams() {
+    const params = new URLSearchParams(window.location.search);
+    return {
+        seed: params.get('seed'),
+        size: params.get('size')
+    };
+}
+
+// Update URL query parameters
+function updateQueryParams(seed, size) {
+    const url = new URL(window.location);
+    url.searchParams.set('seed', seed);
+    url.searchParams.set('size', size);
+    
+    // Update URL without triggering a page reload
+    window.history.replaceState({}, '', url);
+}
+
 // Generate initial map with test seed to verify edge continuity  
 document.addEventListener('DOMContentLoaded', function() {
     loadFavoriteSeeds();
     updateFavoriteSeedsDisplay();
-    document.getElementById('size').value = defaultSize;
-    document.getElementById('seed').value = defaultSeed;
+    
+    // Check for query parameters
+    const queryParams = getQueryParams();
+    
+    // Set size (with validation)
+    let initialSize = defaultSize;
+    if (queryParams.size) {
+        const parsedSize = parseInt(queryParams.size);
+        if (!isNaN(parsedSize) && parsedSize >= 1 && parsedSize <= 1024) {
+            initialSize = parsedSize;
+        }
+    }
+    document.getElementById('size').value = initialSize;
+    
+    // Set seed
+    let initialSeed = defaultSeed;
+    if (queryParams.seed && queryParams.seed.trim()) {
+        initialSeed = queryParams.seed.trim();
+    }
+    document.getElementById('seed').value = initialSeed;
+    
     generate();
 });
