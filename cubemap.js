@@ -193,7 +193,7 @@ function generateFace(face, size, noise) {
     
     // Pre-calculate coordinates and noise in single pass
     const coords = new Array(size * size);
-    const checkRadius = Math.max(1, Math.floor(size / 100));
+    const checkRadius = Math.floor(size / 25);
     
     for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
@@ -1581,7 +1581,6 @@ function downloadCubeNet() {
     }
     
     const size = parseInt(document.getElementById('size').value) || 128;
-    const timestamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
     const seedValue = document.getElementById('seed').value || 'random';
     const sizeValue = document.getElementById('size').value || '128';
     
@@ -1662,7 +1661,7 @@ function downloadCubeNet() {
         const heightmapCanvas = createCubeNetCanvas('heightmap');
         const heightmapLink = document.createElement('a');
         heightmapLink.style.display = 'none';
-        heightmapLink.download = `cubenet_heightmap_${sizeValue}mi_${seedValue}_${timestamp}.png`;
+        heightmapLink.download = `heightmap_${sizeValue}_${seedValue}.png`;
         heightmapLink.href = heightmapCanvas.toDataURL();
         heightmapLink.click();
         
@@ -1671,7 +1670,7 @@ function downloadCubeNet() {
             const biomeCanvas = createCubeNetCanvas('biome');
             const biomeLink = document.createElement('a');
             biomeLink.style.display = 'none';
-            biomeLink.download = `cubenet_biome_${sizeValue}mi_${seedValue}_${timestamp}.png`;
+            biomeLink.download = `colormap_${sizeValue}_${seedValue}.png`;
             biomeLink.href = biomeCanvas.toDataURL();
             biomeLink.click();
         }, 100); // Small delay to prevent browser blocking multiple downloads
