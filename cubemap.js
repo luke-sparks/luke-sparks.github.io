@@ -193,7 +193,7 @@ function generateFace(face, size, noise) {
     
     // Pre-calculate coordinates and noise in single pass
     const coords = new Array(size * size);
-    const checkRadius = Math.floor(size / 25);
+    const checkRadius = Math.floor(size / 50);
     
     for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
