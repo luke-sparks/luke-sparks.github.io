@@ -1213,7 +1213,7 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
             if (isWater && isWater[i]) {
                 const waterHeight = Math.round(waterData[i]);
                 if (waterHeight <= 3) {
-                    // Ocean/rivers: map to 0
+                    // Oceans map to 0
                     remappedValue = 0;
                 } else {
                     // Lakes: use lake-specific height mapping
@@ -1224,7 +1224,8 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
                 remappedValue = landHeightMapping[heightLevel] || 0;
             }
             
-            const colorValue = remappedValue * 8; // Height value * 8 for RGB
+            // Height value * 8 for RGB
+            const colorValue = remappedValue * 8;
             
             data[i * 4] = colorValue;     // R
             data[i * 4 + 1] = colorValue; // G
@@ -1596,12 +1597,9 @@ function downloadCubeNet() {
         combinedCanvas.height = totalHeight;
         const ctx = combinedCanvas.getContext('2d');
         
-        // Fill background with black
-        ctx.fillStyle = 'black';
-        ctx.fillRect(0, 0, totalWidth, totalHeight);
         
-        // Draw red grid lines
-        ctx.strokeStyle = 'red';
+        // Draw transparent grid lines
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0)';
         ctx.lineWidth = borderWidth;
         
         // Vertical lines
