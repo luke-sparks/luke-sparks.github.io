@@ -529,154 +529,6 @@ self.addEventListener('message', function(e) {
     return oceanWorkerBlobURL;
 }
 
-// Lake worker blob URL creation
-let lakeWorkerBlobURL = null;
-function createLakeWorkerBlobURL() {
-    if (lakeWorkerBlobURL) return lakeWorkerBlobURL;
-    
-    const lakeWorkerCode = `
-// Lake Worker - Handles lake height adjustment processing for water bodies
-// This worker runs in a separate thread for parallel processing
-
-function processWaterBodiesForFace(faceData, waterBodies, size) {
-    const maxLakeSize = Math.max(20, size * size * 0.1);
-    const minLakeSize = 5;
-    const adjustments = [];
-    
-    // Process each water body that touches this face
-    for (const {waterBody, size: bodySize} of waterBodies) {
-        if (bodySize <= minLakeSize) {
-            // Mark small water bodies for removal
-            for (const {face, x, y, idx} of waterBody) {
-                adjustments.push({
-                    face,
-                    idx,
-                    action: 'remove',
-                    x,
-                    y
-                });
-            }
-        } else if (bodySize <= maxLakeSize) {
-            // Find minimum surrounding height for lake adjustment
-            let minSurroundingHeight = 11;
-            
-            for (const {face, x, y} of waterBody) {
-                // Check 4-connected neighbors for shore height
-                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    
-                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                        const nidx = ny * size + nx;
-                        if (!faceData.isWater[nidx]) {
-                            minSurroundingHeight = Math.min(minSurroundingHeight, faceData.landData[nidx]);
-                        }
-                    }
-                    // Note: Cross-face neighbor checking will be handled in main thread
-                }
-            }
-            
-            if (minSurroundingHeight < 11) {
-                const lakeHeight = Math.max(4, minSurroundingHeight);
-                for (const {face, idx} of waterBody) {
-                    adjustments.push({
-                        face,
-                        idx,
-                        action: 'adjust_height',
-                        height: lakeHeight
-                    });
-                }
-            }
-        }
-        // Large water bodies (oceans) are left unchanged
-    }
-    
-    return adjustments;
-}
-
-function findConnectedWaterBodiesInFace(faceData, size, startPositions) {
-    const { isWater } = faceData;
-    const visited = new Uint8Array(size * size);
-    const waterBodies = [];
-    
-    for (const {x: startX, y: startY} of startPositions) {
-        const startIdx = startY * size + startX;
-        
-        if (isWater[startIdx] && !visited[startIdx]) {
-            const waterBody = [];
-            const queue = [{x: startX, y: startY}];
-            
-            // Flood fill within this face only
-            while (queue.length > 0) {
-                const {x, y} = queue.shift();
-                const idx = y * size + x;
-                
-                if (visited[idx]) continue;
-                visited[idx] = 1;
-                waterBody.push({x, y, idx});
-                
-                // Check 4-connected neighbors within same face
-                for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    
-                    if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                        const nidx = ny * size + nx;
-                        if (isWater[nidx] && !visited[nidx]) {
-                            queue.push({x: nx, y: ny});
-                        }
-                    }
-                }
-            }
-            
-            waterBodies.push({waterBody, size: waterBody.length});
-        }
-    }
-    
-    return waterBodies;
-}
-
-// Worker message handler
-self.addEventListener('message', function(e) {
-    const { face, faceData, size, taskId, mode, waterBodies, startPositions } = e.data;
-    
-    try {
-        let result;
-        
-        if (mode === 'find_water_bodies') {
-            // Find water bodies within this face
-            result = findConnectedWaterBodiesInFace(faceData, size, startPositions);
-        } else if (mode === 'process_adjustments') {
-            // Process water body adjustments
-            result = processWaterBodiesForFace(faceData, waterBodies, size);
-        }
-        
-        // Send result back to main thread
-        self.postMessage({
-            taskId,
-            face,
-            success: true,
-            mode,
-            result
-        });
-        
-    } catch (error) {
-        // Send error back to main thread
-        self.postMessage({
-            taskId,
-            face,
-            success: false,
-            error: error.message
-        });
-    }
-});
-`;
-    
-    const blob = new Blob([lakeWorkerCode], { type: 'application/javascript' });
-    lakeWorkerBlobURL = URL.createObjectURL(blob);
-    return lakeWorkerBlobURL;
-}
-
 // Initialize worker pool
 function initializeWorkers() {
     // Create worker blob URL to avoid CORS issues
@@ -1071,7 +923,7 @@ function getEdgePixels(faceSize, edgeIndex) {
 }
 
 // Parallel lake height adjustment using cross-face coordination
-async function adjustLakeHeights(allFaceData, size) {
+function adjustLakeHeights(allFaceData, size) {
     console.log('Finding connected water bodies across faces...');
     
     // Step 1: Find all connected water bodies using cross-face flood fill in main thread
@@ -1613,11 +1465,12 @@ async function generate() {
         
         // Second pass: Run ocean depths and lake heights in parallel
         await Promise.all([
-            enhanceOceanDepths(allFaceData, size),
-            adjustLakeHeights(allFaceData, size)
+            enhanceOceanDepths(allFaceData, size)
         ]);
         
-        console.log('Ocean enhancement completed, final rendering...');
+        console.log('Ocean enhancement completed');
+
+        adjustLakeHeights(allFaceData, size)
         
         // Third pass: Update final heightData and render with enhanced ocean depths
         for (let i = 0; i < faces.length; i++) {
