@@ -1099,7 +1099,7 @@ function adjustLakeHeights(allFaceData, size) {
             }
         } else if (bodySize <= maxLakeSize) {
             // Adjust lake heights for medium-sized water bodies
-            let minSurroundingHeight = -1;
+            let minSurroundingHeight = 999;
             
             for (const {face, x, y} of waterBody) {
                 const faceData = allFaceData[face];
@@ -1163,7 +1163,7 @@ function adjustLakeHeights(allFaceData, size) {
                 }
             }
             
-            if (minSurroundingHeight != -1) {
+            if (minSurroundingHeight < 999) {
                 const lakeHeight = Math.max(4, minSurroundingHeight);
                 for (const {face, idx} of waterBody) {
                     allFaceData[face].waterData[idx] = lakeHeight;
