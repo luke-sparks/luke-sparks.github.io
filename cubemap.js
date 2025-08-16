@@ -709,8 +709,7 @@ function calculateDistanceFromLand(allFaceData, size) {
                             continue;
                         }
 
-                        crossFaceAdjacentX = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).x;
-                        crossFaceAdjacentY = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex).y;
+                        let {x: crossFaceAdjacentX, y: crossFaceAdjacentY} = transformPixelForCrossFace(neighborX, neighborY, size, currentFace, sourceEdgeIndex);
                         
                         const adjacentPixelIndex = crossFaceAdjacentY * size + crossFaceAdjacentX;
                         const adjacentFaceData = allFaceData[crossFaceAdjacentFace];
