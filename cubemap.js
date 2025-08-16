@@ -1447,36 +1447,48 @@ async function generate() {
             initializeWorkers();
         }
         
-        // First pass: Generate all face terrain data in parallel using workers
+        // First pass: Generate face terrain data and render each face as it completes
         console.log('Starting parallel face generation...');
-        const facePromises = faces.map(face => generateFaceWithWorker(face, size, seed));
-        const faceResults = await Promise.all(facePromises);
         
-        console.log('Face generation completed, processing results...');
-        
-        // Process results and render initial terrain
-        for (let i = 0; i < faces.length; i++) {
-            const face = faces[i];
-            const result = faceResults[i];
-            
-            currentData[face] = result;
-            
-            // Store face data for cross-face lake detection
-            allFaceData[face] = {
-                waterData: result.layers.water,
-                landData: result.layers.land,
-                isWater: result.layers.isWater
-            };
-            
-            // Store layers from front face for layer visualization
-            if (face === 'front') {
-                currentLayers = result.layers;
+        // Create promises for each face and handle them individually as they complete
+        const facePromises = faces.map(async (face) => {
+            try {
+                console.log(`Starting generation for ${face}...`);
+                const result = await generateFaceWithWorker(face, size, seed);
+                
+                // Process and render this face immediately
+                currentData[face] = result;
+                
+                // Store face data for cross-face lake detection
+                allFaceData[face] = {
+                    waterData: result.layers.water,
+                    landData: result.layers.land,
+                    isWater: result.layers.isWater
+                };
+                
+                // Store layers from front face for layer visualization
+                if (face === 'front') {
+                    currentLayers = result.layers;
+                }
+                
+                // Render initial terrain (before ocean enhancement)
+                const canvas = document.getElementById(face);
+                render(canvas, result.heightData, result.biomeData, size, currentView, result.layers.isWater, result.layers.water);
+                console.log(`Generation and initial render complete for ${face}`);
+                
+                return { face, result };
+            } catch (error) {
+                console.error(`Error generating ${face}:`, error);
+                throw error;
             }
-            
-            // Render initial terrain (before ocean enhancement)
-            const canvas = document.getElementById(face);
-            render(canvas, result.heightData, result.biomeData, size, currentView, result.layers.isWater, result.layers.water);
-        }
+        });
+        
+        // Wait for all faces to complete
+        await Promise.all(facePromises);
+        console.log('All face generation completed');
+        
+        // Force browser to render the initial state before starting enhancement
+        await new Promise(resolve => setTimeout(resolve, 50));
         
         console.log('Starting parallel ocean and lake processing...');
         
@@ -1490,10 +1502,13 @@ async function generate() {
         adjustLakeHeights(allFaceData, size)
         
         // Third pass: Update final heightData and render with enhanced ocean depths
+        console.log('Starting final rendering with enhanced ocean depths...');
         for (let i = 0; i < faces.length; i++) {
             const face = faces[i];
             const data = currentData[face];
             const faceData = allFaceData[face];
+            
+            console.log(`Processing final render for ${face}...`);
             
             // Update final height data with enhanced ocean depths and adjusted lake heights
             for (let j = 0; j < size * size; j++) {
@@ -1581,6 +1596,7 @@ async function generate() {
             // Final render with enhanced ocean depths
             const canvas = document.getElementById(face);
             render(canvas, data.heightData, data.biomeData, size, currentView, faceData.isWater, faceData.waterData);
+            console.log(`Final render complete for ${face} with enhanced ocean depths`);
         }
         
         console.log('Generation completed successfully!');
