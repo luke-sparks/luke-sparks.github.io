@@ -873,7 +873,7 @@ function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFace
             
         // Right face transitions  
         case 'right-0':     // right top -> top right
-            return {x: sizeAdjusted, y: size - sourcePixelX};
+            return {x: sizeAdjusted, y: sizeAdjusted - sourcePixelX};
         case 'right-1':    // right right -> back left
             return {x: 0, y: sourcePixelY};
         case 'right-2':  // right bottom -> bottom right  
@@ -883,11 +883,11 @@ function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFace
             
         // Back face transitions
         case 'back-0':      // back top -> top top
-            return {x: size - sourcePixelX, y: 0};
+            return {x: sizeAdjusted - sourcePixelX, y: 0};
         case 'back-1':     // back right -> left left
             return {x: 0, y: sourcePixelY};
         case 'back-2':   // back bottom -> bottom bottom
-            return {x: size - sourcePixelX, y: sizeAdjusted};
+            return {x: sizeAdjusted - sourcePixelX, y: sizeAdjusted};
         case 'back-3':    // back left -> right right
             return {x: sizeAdjusted, y: sourcePixelY};
             
@@ -897,15 +897,15 @@ function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFace
         case 'left-1':    // left right -> front left
             return {x: 0, y: sourcePixelY};  
         case 'left-2':   // left bottom -> bottom left
-            return {x: 0, y: size - sourcePixelX};
+            return {x: 0, y: sizeAdjusted - sourcePixelX};
         case 'left-3':     // left left -> back right
             return {x: sizeAdjusted, y: sourcePixelY};
             
         // Top face transitions
         case 'top-0':      // top top -> back top
-            return {x: size - sourcePixelX, y: 0};
+            return {x: sizeAdjusted - sourcePixelX, y: 0};
         case 'top-1':     // top right -> right top
-            return {x: size - sourcePixelY, y: 0};
+            return {x: sizeAdjusted - sourcePixelY, y: 0};
         case 'top-2':     // top bottom -> front top
             return {x: sourcePixelX, y: 0};
         case 'top-3':      // top left -> left top
@@ -917,9 +917,9 @@ function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFace
         case 'bottom-1':  // bottom right -> right bottom  
             return {x: sourcePixelY, y: sizeAdjusted};
         case 'bottom-2':   // bottom bottom -> back bottom
-            return {x: size - sourcePixelX, y: sizeAdjusted};
+            return {x: sizeAdjusted - sourcePixelX, y: sizeAdjusted};
         case 'bottom-3':   // bottom left -> left bottom
-            return {x: size - sourcePixelY, y: sizeAdjusted};
+            return {x: sizeAdjusted - sourcePixelY, y: sizeAdjusted};
             
         default:
             // If we don't have a specific transformation, return original direction
