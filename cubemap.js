@@ -15,10 +15,10 @@ const colors = [
         [150, 200, 110], // Level 5: Lowlands/plains
         [120, 180, 80],  // Level 6: Low plains
         [100, 160, 70],  // Level 7: Plain
-        [90, 140, 65],   // Level 8: Rolling hills
-        [110, 130, 75],  // Level 9: Lower hills
-        [120, 120, 80],  // Level 10: Hills
-        [130, 115, 85],  // Level 11: Higher hills
+        [90, 150, 65],   // Level 8: Rolling hills
+        [110, 140, 75],  // Level 9: Lower hills
+        [115, 130, 75],  // Level 10: Hills
+        [125, 130, 80],  // Level 11: Higher hills
         [140, 120, 80],  // Level 12: Highlands
         [145, 125, 85],  // Level 13: High highlands
         [150, 130, 90],  // Level 14: Lower mountains
