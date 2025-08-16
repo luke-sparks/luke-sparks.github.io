@@ -6,6 +6,30 @@ let favoriteSeeds = [];
 let defaultSize = 80;
 let defaultSeed = 'default';
 
+const colors = [
+        null,
+        [5, 15, 60],     // Level 1: Deep ocean
+        [15, 35, 90],    // Level 2: Medium ocean
+        [30, 60, 130],   // Level 3: Shallow ocean
+        [220, 200, 160], // Level 4: Beach/coastal
+        [150, 200, 110], // Level 5: Lowlands/plains
+        [120, 180, 80],  // Level 6: Low plains
+        [100, 160, 70],  // Level 7: Plain
+        [90, 140, 65],   // Level 8: Rolling hills
+        [110, 130, 75],  // Level 9: Lower hills
+        [120, 120, 80],  // Level 10: Hills
+        [130, 115, 85],  // Level 11: Higher hills
+        [140, 120, 80],  // Level 12: Highlands
+        [145, 125, 85],  // Level 13: High highlands
+        [150, 130, 90],  // Level 14: Lower mountains
+        [160, 140, 100], // Level 15: Mountains
+        [170, 150, 120], // Level 16: High mountains
+        [180, 170, 150], // Level 17: Alpine
+        [200, 200, 210], // Level 18: High peaks
+        [220, 220, 230], // Level 19: Snow line
+        [245, 245, 255]  // Level 20: Snow peaks
+    ];
+
 // Worker pool for parallel face generation
 let workerPool = [];
 let taskCounter = 0;
@@ -123,21 +147,32 @@ function getCubeCoords(face, u, v) {
 }
 
 function getBiome(heightLevel, temperature, moisture) {
-    // Exactly 10 colors based on height levels 1-10
-    // Enhanced ocean depths: Level 1 (deep), Level 2 (medium), Level 3 (shallow)
+    // Exactly 20 colors based on height levels 1-20
+    // Ocean depths unchanged: Level 1 (deep), Level 2 (medium), Level 3 (shallow)
+    // Land levels 4-20 with additional greens and greenish browns
     
     const colors = [
         null, // Index 0 unused
-        [5, 15, 60],    // Level 1: Deep ocean (very dark blue)
-        [15, 35, 90],   // Level 2: Medium ocean (medium blue)
-        [30, 60, 130],  // Level 3: Shallow ocean (lighter blue)
-        [220, 200, 160], // Level 4: Beach/coastal (sandy)
-        [120, 180, 80],  // Level 5: Lowlands/plains (green)
-        [100, 150, 70],  // Level 6: Hills (darker green)
-        [140, 120, 80],  // Level 7: Highlands (brown-green)
-        [160, 140, 100], // Level 8: Mountains (brown)
-        [180, 160, 140], // Level 9: High mountains (gray-brown)
-        [240, 240, 250]  // Level 10: Snow peaks (white)
+        [5, 15, 60],     // Level 1: Deep ocean
+        [15, 35, 90],    // Level 2: Medium ocean
+        [30, 60, 130],   // Level 3: Shallow ocean
+        [220, 200, 160], // Level 4: Beach/coastal
+        [150, 200, 110], // Level 5: Lowlands/plains
+        [120, 180, 80],  // Level 6: Low plains
+        [100, 160, 70],  // Level 7: Plain
+        [90, 140, 65],   // Level 8: Rolling hills
+        [110, 130, 75],  // Level 9: Lower hills
+        [120, 120, 80],  // Level 10: Hills
+        [130, 115, 85],  // Level 11: Higher hills
+        [140, 120, 80],  // Level 12: Highlands
+        [145, 125, 85],  // Level 13: High highlands
+        [150, 130, 90],  // Level 14: Lower mountains
+        [160, 140, 100], // Level 15: Mountains
+        [170, 150, 120], // Level 16: High mountains
+        [180, 170, 150], // Level 17: Alpine
+        [200, 200, 210], // Level 18: High peaks
+        [220, 220, 230], // Level 19: Snow line
+        [245, 245, 255]  // Level 20: Snow peaks
     ];
     
     // Return the exact color for this height level
@@ -193,7 +228,7 @@ function generateFace(face, size, noise) {
     
     // Pre-calculate coordinates and noise in single pass
     const coords = new Array(size * size);
-    const checkRadius = Math.floor(size / 50);
+    const checkRadius = Math.floor(size);
     
     for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
@@ -299,9 +334,9 @@ function generateFace(face, size, noise) {
                 waterData[idx] = 1;
                 landData[idx] = 0;
             } else {
-                // Quantize land height to discrete levels (4-10)
-                let quantizedHeight = Math.floor(((landHeight - 0.3) / 0.7) * 7) + 4;
-                quantizedHeight = Math.max(4, Math.min(10, quantizedHeight));
+                // Quantize land height to discrete levels (4-20)
+                let quantizedHeight = Math.floor(((landHeight - 0.27) / 0.7) * 17) + 4;
+                quantizedHeight = Math.max(4, Math.min(20, quantizedHeight));
                 
                 // Minimize large sand areas - optimized coastal check
                 if (quantizedHeight === 4) {
@@ -385,7 +420,7 @@ function generateFace(face, size, noise) {
             // Land biome - generate climate for land
             let latitude = Math.abs(coord.y);
             let baseTemp = 1.0 - latitude * 0.8;
-            const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
+            const elevationCooling = Math.max(0, (finalHeight/20) - 0.2) * 1.0;
             
             // Climate noise - 300 degree rotation
             const climateRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 10);
@@ -395,7 +430,7 @@ function generateFace(face, size, noise) {
             // Precipitation noise - 330 degree rotation
             const precipRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 11);
             const precipitation = noise.fbm(precipRotated.x * precipScale + 1000, precipRotated.y * precipScale + 1000, precipRotated.z * precipScale + 1000, 3);
-            const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/10) - 0.2) * 2);
+            const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/20) - 0.2) * 2);
             const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
             
             const biome = getBiome(finalHeight, temperature, moisture);
@@ -1065,7 +1100,7 @@ function adjustLakeHeights(allFaceData, size) {
             }
         } else if (bodySize <= maxLakeSize) {
             // Adjust lake heights for medium-sized water bodies
-            let minSurroundingHeight = 11;
+            let minSurroundingHeight = -1;
             
             for (const {face, x, y} of waterBody) {
                 const faceData = allFaceData[face];
@@ -1129,7 +1164,7 @@ function adjustLakeHeights(allFaceData, size) {
                 }
             }
             
-            if (minSurroundingHeight < 11) {
+            if (minSurroundingHeight != -1) {
                 const lakeHeight = Math.max(4, minSurroundingHeight);
                 for (const {face, idx} of waterBody) {
                     allFaceData[face].waterData[idx] = lakeHeight;
@@ -1141,23 +1176,6 @@ function adjustLakeHeights(allFaceData, size) {
 }
 
 function getBiome(heightLevel, temperature, moisture) {
-    // Exactly 10 colors based on height levels 1-10
-    // Enhanced ocean depths: Level 1 (deep), Level 2 (medium), Level 3 (shallow)
-    
-    const colors = [
-        null, // Index 0 unused
-        [5, 15, 60],    // Level 1: Deep ocean (very dark blue)
-        [15, 35, 90],   // Level 2: Medium ocean (medium blue)
-        [30, 60, 130],  // Level 3: Shallow ocean (lighter blue)
-        [220, 200, 160], // Level 4: Beach/coastal (sandy)
-        [120, 180, 80],  // Level 5: Lowlands/plains (green)
-        [100, 150, 70],  // Level 6: Hills (darker green)
-        [140, 120, 80],  // Level 7: Highlands (brown-green)
-        [160, 140, 100], // Level 8: Mountains (brown)
-        [180, 160, 140], // Level 9: High mountains (gray-brown)
-        [240, 240, 250]  // Level 10: Snow peaks (white)
-    ];
-    
     // Return the exact color for this height level
     return colors[heightLevel] || [0, 0, 0];
 }
@@ -1181,32 +1199,30 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
     const data = imageData.data;
     
     if (view === 'heightmap') {
-        // Height value remapping for land: 1-3→0, 4→1, 5→2, 6→3, 7→5, 8→8, 9→11, 10→15
+        // Height value remapping for land: Land levels 4-20 mapped to heights
         const landHeightMapping = {
-            1: 0, 2: 0, 3: 0,  // Ocean depths → 0
-            4: 1,              // Beach → 1
-            5: 2,              // Lowlands → 2
-            6: 3,              // Hills → 3
-            7: 5,              // Highlands → 5
-            8: 8,              // Mountains → 8
-            9: 11,             // High mountains → 11
-            10: 15             // Snow peaks → 15
-        };
-        
-        // Separate height mapping for lakes: 4→0, 5→1, 6→2, 7→4, 8→7, 9→10, 10→14
-        const lakeHeightMapping = {
-            1: 0, 2: 0, 3: 0,  // Ocean depths → 0 (shouldn't be used for lakes)
-            4: 0,              // Lake at beach level → 0
-            5: 1,              // Lake at lowland level → 1
-            6: 2,              // Lake at hill level → 2
-            7: 4,              // Lake at highland level → 4
-            8: 7,              // Lake at mountain level → 7
-            9: 10,             // Lake at high mountain level → 10
-            10: 14             // Lake at snow peak level → 14
+            1: 0, 2: 0, 3: 0,   // Ocean depths
+            4: 1,               // Beach
+            5: 2,               // Lowlands
+            6: 3,               // Low plains
+            7: 4,               // Plains
+            8: 5,              // Rolling hills 
+            9: 6,              // Lower hills
+            10: 7,             // Hills
+            11: 9,             // Higher hills
+            12: 11,             // Highlands
+            13: 13,             // High highlands
+            14: 15,             // Lower mountains
+            15: 17,             // Mountains
+            16: 20,             // High mountains
+            17: 23,             // Alpine
+            18: 26,             // High peaks
+            19: 30,             // Snow line
+            20: 34              // Snow peaks
         };
         
         for (let i = 0; i < heightData.length; i++) {
-            // Convert quantized height (0.1-1.0) back to discrete levels
+            // Convert quantized height (0.1-2.0) back to discrete levels
             const heightLevel = Math.round(heightData[i] * 10);
             
             let remappedValue;
@@ -1216,8 +1232,9 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
                     // Oceans map to 0
                     remappedValue = 0;
                 } else {
-                    // Lakes: use lake-specific height mapping
-                    remappedValue = lakeHeightMapping[waterHeight] || 0;
+                    // Lakes: lakes should be 1 height less than surrounding land
+                    // unless that would make them negative
+                    remappedValue = landHeightMapping[waterHeight] - 1 < 0 ? 0 : landHeightMapping[waterHeight] - 1;
                 }
             } else {
                 // Use normal height mapping for land
@@ -1225,7 +1242,7 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
             }
             
             // Height value * 8 for RGB
-            const colorValue = remappedValue * 8;
+            const colorValue = remappedValue * 4;
             
             data[i * 4] = colorValue;     // R
             data[i * 4 + 1] = colorValue; // G
@@ -1546,7 +1563,7 @@ async function generate() {
                     // Generate climate for land biome (simplified version)
                     let latitude = Math.abs(coord.y);
                     let baseTemp = 1.0 - latitude * 0.8;
-                    const elevationCooling = Math.max(0, (finalHeight/10) - 0.3) * 1.0;
+                    const elevationCooling = Math.max(0, (finalHeight/20) - 0.2) * 1.0;
                     const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling));
                     const moisture = Math.max(0, Math.min(1, 0.5));
                     
