@@ -8,27 +8,61 @@ let defaultSeed = 'default';
 
 const colors = [
         null,
-        [5, 15, 60],     // Level 1: Deep ocean
-        [15, 35, 90],    // Level 2: Medium ocean
-        [30, 60, 130],   // Level 3: Shallow ocean
-        [220, 200, 160], // Level 4: Beach/coastal
-        [150, 200, 110], // Level 5: Lowlands/plains
-        [120, 180, 80],  // Level 6: Low plains
-        [100, 160, 70],  // Level 7: Plain
-        [90, 150, 65],   // Level 8: Rolling hills
-        [110, 140, 75],  // Level 9: Lower hills
-        [115, 130, 75],  // Level 10: Hills
-        [125, 130, 80],  // Level 11: Higher hills
-        [140, 120, 80],  // Level 12: Highlands
-        [145, 125, 85],  // Level 13: High highlands
-        [150, 130, 90],  // Level 14: Lower mountains
-        [160, 140, 100], // Level 15: Mountains
-        [170, 150, 120], // Level 16: High mountains
-        [180, 170, 150], // Level 17: Alpine
-        [200, 200, 210], // Level 18: High peaks
-        [220, 220, 230], // Level 19: Snow line
-        [245, 245, 255]  // Level 20: Snow peaks
+        {r: 5, g: 15, b: 60},     // Level 1: Deep ocean
+        {r: 15, g: 35, b: 90},    // Level 2: Medium ocean
+        {r: 30, g: 60, b: 130},   // Level 3: Shallow ocean
+        {r: 220, g: 200, b: 160}, // Level 4: Beach
+        {r: 150, g: 200, b: 110}, // Level 5: Lowlands
+        {r: 120, g: 180, b: 80},  // Level 6: Low plains
+        {r: 100, g: 160, b: 70},  // Level 7: Plain
+        {r: 90, g: 150, b: 65},   // Level 8: Rolling hills
+        {r: 110, g: 140, b: 75},  // Level 9: Lower hills
+        {r: 115, g: 130, b: 75},  // Level 10: Hills
+        {r: 125, g: 130, b: 80},  // Level 11: Higher hills
+        {r: 140, g: 120, b: 80},  // Level 12: Highlands
+        {r: 145, g: 125, b: 85},  // Level 13: High highlands
+        {r: 150, g: 130, b: 90},  // Level 14: Lower mountains
+        {r: 160, g: 140, b: 100}, // Level 15: Mountains
+        {r: 170, g: 150, b: 120}, // Level 16: High mountains
+        {r: 180, g: 170, b: 150}, // Level 17: Alpine
+        {r: 200, g: 200, b: 210}, // Level 18: High peaks
+        {r: 220, g: 220, b: 230}, // Level 19: Snow line
+        {r: 245, g: 245, b: 255}  // Level 20: Snow peaks
     ];
+
+// Height value remapping for land: Land levels 4-20 mapped to heights
+const landHeightMapping = {
+    1: 0, 2: 0, 3: 0,   // Ocean depths
+    4: 1,               // Beach
+    5: 2,               // Lowlands
+    6: 3,               // Low plains
+    7: 4,               // Plains
+    8: 5,              // Rolling hills 
+    9: 6,              // Lower hills
+    10: 7,             // Hills
+    11: 9,             // Higher hills
+    12: 11,             // Highlands
+    13: 13,             // High highlands
+    14: 15,             // Lower mountains
+    15: 17,             // Mountains
+    16: 20,             // High mountains
+    17: 23,             // Alpine
+    18: 26,             // High peaks
+    19: 30,             // Snow line
+    20: 34              // Snow peaks
+};
+
+// Not using (for now?)
+// const binnedHeightMapping = [
+//     [1, 2, 3],       // water
+//     [4, 5],          // beach/lowlands
+//     [6, 7, 8],       // plains
+//     [9, 10, 11],     // low hills
+//     [12, 13, 14],    // higher hills
+//     [15, 16, 17],    // mountains
+//     [18, 29],        // peaks
+//     [20]             // mountaintops
+// ]
 
 // Worker pool for parallel face generation
 let workerPool = [];
@@ -152,31 +186,31 @@ function getBiome(heightLevel, temperature, moisture) {
     // Land levels 4-20 with additional greens and greenish browns
     
     const colors = [
-        null, // Index 0 unused
-        [5, 15, 60],     // Level 1: Deep ocean
-        [15, 35, 90],    // Level 2: Medium ocean
-        [30, 60, 130],   // Level 3: Shallow ocean
-        [220, 200, 160], // Level 4: Beach/coastal
-        [150, 200, 110], // Level 5: Lowlands/plains
-        [120, 180, 80],  // Level 6: Low plains
-        [100, 160, 70],  // Level 7: Plain
-        [90, 140, 65],   // Level 8: Rolling hills
-        [110, 130, 75],  // Level 9: Lower hills
-        [120, 120, 80],  // Level 10: Hills
-        [130, 115, 85],  // Level 11: Higher hills
-        [140, 120, 80],  // Level 12: Highlands
-        [145, 125, 85],  // Level 13: High highlands
-        [150, 130, 90],  // Level 14: Lower mountains
-        [160, 140, 100], // Level 15: Mountains
-        [170, 150, 120], // Level 16: High mountains
-        [180, 170, 150], // Level 17: Alpine
-        [200, 200, 210], // Level 18: High peaks
-        [220, 220, 230], // Level 19: Snow line
-        [245, 245, 255]  // Level 20: Snow peaks
+        null,
+        {r: 5, g: 15, b: 60},     // Level 1: Deep ocean
+        {r: 15, g: 35, b: 90},    // Level 2: Medium ocean
+        {r: 30, g: 60, b: 130},   // Level 3: Shallow ocean
+        {r: 220, g: 200, b: 160}, // Level 4: Beach
+        {r: 150, g: 200, b: 110}, // Level 5: Lowlands
+        {r: 120, g: 180, b: 80},  // Level 6: Low plains
+        {r: 100, g: 160, b: 70},  // Level 7: Plain
+        {r: 90, g: 150, b: 65},   // Level 8: Rolling hills
+        {r: 110, g: 140, b: 75},  // Level 9: Lower hills
+        {r: 115, g: 130, b: 75},  // Level 10: Hills
+        {r: 125, g: 130, b: 80},  // Level 11: Higher hills
+        {r: 140, g: 120, b: 80},  // Level 12: Highlands
+        {r: 145, g: 125, b: 85},  // Level 13: High highlands
+        {r: 150, g: 130, b: 90},  // Level 14: Lower mountains
+        {r: 160, g: 140, b: 100}, // Level 15: Mountains
+        {r: 170, g: 150, b: 120}, // Level 16: High mountains
+        {r: 180, g: 170, b: 150}, // Level 17: Alpine
+        {r: 200, g: 200, b: 210}, // Level 18: High peaks
+        {r: 220, g: 220, b: 230}, // Level 19: Snow line
+        {r: 245, g: 245, b: 255}  // Level 20: Snow peaks
     ];
     
     // Return the exact color for this height level
-    return colors[heightLevel] || [0, 0, 0];
+    return colors[heightLevel] || {r: 0, g: 0, b: 0};
 }
 
 // Function to rotate 3D coordinates by given angle around Z axis
@@ -412,9 +446,9 @@ function generateFace(face, size, noise) {
             const biome = getBiome(waterColorLevel, 0, 1);
             
             const biomeIdx = i * 4;
-            biomeData[biomeIdx] = biome[0];
-            biomeData[biomeIdx + 1] = biome[1];
-            biomeData[biomeIdx + 2] = biome[2];
+            biomeData[biomeIdx] = biome.r;
+            biomeData[biomeIdx + 1] = biome.g;
+            biomeData[biomeIdx + 2] = biome.b;
             biomeData[biomeIdx + 3] = 255;
         } else {
             // Land biome - generate climate for land
@@ -436,9 +470,9 @@ function generateFace(face, size, noise) {
             const biome = getBiome(finalHeight, temperature, moisture);
             
             const biomeIdx = i * 4;
-            biomeData[biomeIdx] = biome[0];
-            biomeData[biomeIdx + 1] = biome[1];
-            biomeData[biomeIdx + 2] = biome[2];
+            biomeData[biomeIdx] = biome.r;
+            biomeData[biomeIdx + 1] = biome.g;
+            biomeData[biomeIdx + 2] = biome.b;
             biomeData[biomeIdx + 3] = 255;
         }
     }
@@ -1176,7 +1210,7 @@ function adjustLakeHeights(allFaceData, size) {
 
 function getBiome(heightLevel, temperature, moisture) {
     // Return the exact color for this height level
-    return colors[heightLevel] || [0, 0, 0];
+    return colors[heightLevel] || {r: 0, g: 0, b: 0};
 }
 
 // Function to rotate 3D coordinates by given angle around Z axis
@@ -1190,6 +1224,30 @@ function rotateCoordinates(x, y, z, angleRadians) {
     };
 }
 
+function convertToMappedHeight(colorMultiplier, heightData, waterData, isWater) {
+    // Convert quantized height (0.1-2.0) back to discrete levels
+    const heightLevel = Math.round(heightData * 10);
+    
+    let remappedValue;
+    if (isWater) {
+        const waterHeight = Math.round(waterData);
+        if (waterHeight <= 3) {
+            // Oceans map to 0
+            remappedValue = 0;
+        } else {
+            // Lakes: lakes should be 1 height less than surrounding land
+            // unless that would make them negative
+            remappedValue = landHeightMapping[waterHeight] - 1 <= 0 ? 0 : landHeightMapping[waterHeight] - 1;
+        }
+    } else {
+        // Use normal height mapping for land
+        remappedValue = landHeightMapping[heightLevel] || 0;
+    }
+    
+    // Height value * 8 for RGB
+    return remappedValue * colorMultiplier;
+}
+
 function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
     canvas.width = size;
     canvas.height = size;
@@ -1198,50 +1256,8 @@ function render(canvas, heightData, biomeData, size, view, isWater, waterData) {
     const data = imageData.data;
     
     if (view === 'heightmap') {
-        // Height value remapping for land: Land levels 4-20 mapped to heights
-        const landHeightMapping = {
-            1: 0, 2: 0, 3: 0,   // Ocean depths
-            4: 1,               // Beach
-            5: 2,               // Lowlands
-            6: 3,               // Low plains
-            7: 4,               // Plains
-            8: 5,              // Rolling hills 
-            9: 6,              // Lower hills
-            10: 7,             // Hills
-            11: 9,             // Higher hills
-            12: 11,             // Highlands
-            13: 13,             // High highlands
-            14: 15,             // Lower mountains
-            15: 17,             // Mountains
-            16: 20,             // High mountains
-            17: 23,             // Alpine
-            18: 26,             // High peaks
-            19: 30,             // Snow line
-            20: 34              // Snow peaks
-        };
-        
         for (let i = 0; i < heightData.length; i++) {
-            // Convert quantized height (0.1-2.0) back to discrete levels
-            const heightLevel = Math.round(heightData[i] * 10);
-            
-            let remappedValue;
-            if (isWater && isWater[i]) {
-                const waterHeight = Math.round(waterData[i]);
-                if (waterHeight <= 3) {
-                    // Oceans map to 0
-                    remappedValue = 0;
-                } else {
-                    // Lakes: lakes should be 1 height less than surrounding land
-                    // unless that would make them negative
-                    remappedValue = landHeightMapping[waterHeight] - 1 < 0 ? 0 : landHeightMapping[waterHeight] - 1;
-                }
-            } else {
-                // Use normal height mapping for land
-                remappedValue = landHeightMapping[heightLevel] || 0;
-            }
-            
-            // Height value * 8 for RGB
-            const colorValue = remappedValue * 4;
+            const colorValue = convertToMappedHeight(4, heightData[i], waterData[i], isWater[i]);
             
             data[i * 4] = colorValue;     // R
             data[i * 4 + 1] = colorValue; // G
@@ -1545,9 +1561,9 @@ async function generate() {
                     const biome = getBiome(waterColorLevel, 0, 1);
                     
                     const biomeIdx = j * 4;
-                    biomeData[biomeIdx] = biome[0];
-                    biomeData[biomeIdx + 1] = biome[1];
-                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx] = biome.r;
+                    biomeData[biomeIdx + 1] = biome.g;
+                    biomeData[biomeIdx + 2] = biome.b;
                     biomeData[biomeIdx + 3] = 255;
                 } else {
                     // For land pixels (including converted small water bodies), regenerate biome
@@ -1584,9 +1600,9 @@ async function generate() {
                     const biome = getBiome(finalHeight, temperature, moisture);
                     
                     const biomeIdx = j * 4;
-                    biomeData[biomeIdx] = biome[0];
-                    biomeData[biomeIdx + 1] = biome[1];
-                    biomeData[biomeIdx + 2] = biome[2];
+                    biomeData[biomeIdx] = biome.r;
+                    biomeData[biomeIdx + 1] = biome.g;
+                    biomeData[biomeIdx + 2] = biome.b;
                     biomeData[biomeIdx + 3] = 255;
                 }
             }
@@ -1616,6 +1632,144 @@ function downloadCubeNet() {
     const size = parseInt(document.getElementById('size').value) || 128;
     const seedValue = document.getElementById('seed').value || 'random';
     const sizeValue = document.getElementById('size').value || '128';
+    const reduceBy = 4;
+    const smallerSize = Math.floor(size / reduceBy);
+
+    function binCubeNet(biomeData, heightData, originalSize, isWater, waterData, isColorMap) {
+        const binSize = Math.floor(originalSize / reduceBy);
+        const binnedData = new Uint8ClampedArray(binSize * binSize * reduceBy);
+
+        for (let y = 0; y < binSize; y++) {
+            for (let x = 0; x < binSize; x++) {
+                const sourceX = x * reduceBy;
+                const sourceY = y * reduceBy;
+
+                const heightCounts = new Map();
+                const colorCounts = new Map();
+                const lakeHeights = new Map();
+                let oceanCount = 0;
+                let lakeCount = 0;
+
+                for (let dy = 0; dy < reduceBy; dy++) {
+                    for (let dx = 0; dx < reduceBy; dx++) {
+                        const srcX = Math.min(sourceX + dx, originalSize - 1);
+                        const srcY = Math.min(sourceY + dy, originalSize - 1);
+                        const srcIdxHeight = srcY * originalSize + srcX;
+                        const srcIdxColor = srcIdxHeight * 4;
+
+                        const height = convertToMappedHeight(1, heightData[srcIdxHeight], waterData[srcIdxHeight], isWater[srcIdxHeight]);
+                        const r = biomeData[srcIdxColor];
+                        const g = biomeData[srcIdxColor + 1];
+                        const b = biomeData[srcIdxColor + 2];
+                        const color = {r: r, g: g, b: b};
+                        
+                        let mappedLevel;
+                        if (height < landHeightMapping[4]) {
+                            mappedLevel = 0;
+                        } else if (height < landHeightMapping[6]) {
+                            mappedLevel = 1;
+                        } else if (height < landHeightMapping[9]) {
+                            mappedLevel = 2;
+                        } else if (height < landHeightMapping[12]) {
+                            mappedLevel = 3;
+                        } else if (height < landHeightMapping[15]) {
+                            mappedLevel = 4;
+                        } else if (height < landHeightMapping[18]) {
+                            mappedLevel = 5;
+                        } else if (height < landHeightMapping[20]) {
+                            mappedLevel = 6;
+                        } else {
+                            mappedLevel = 7;
+                        }
+
+                        if (mappedLevel === 0) {
+                            oceanCount++;
+                        } else if (isWater[srcIdxHeight]) {
+                            lakeCount++;
+                            lakeHeights.set(mappedLevel, (lakeHeights.get(mappedLevel) || 0) + 1);
+                        }
+
+                        const colorIndex = colors.findIndex((c) => {
+                            if (c) {
+                                return c.r == color.r && c.g == color.g && c.b == color.b;
+                            } else {
+                                return false;
+                            }
+                        });
+
+                        heightCounts.set(mappedLevel, (heightCounts.get(mappedLevel) || 0) + 1);
+                        colorCounts.set(colorIndex, (colorCounts.get(colorIndex) || 0) + 1)
+                    }
+                }
+
+                const heightCountsArray = Array.from(heightCounts).sort((a, b) => {
+                    const count = b[1] - a[1];
+                    return count == 0 ? a[0] - b[0] : count;
+                });
+
+                const colorCountsArray = Array.from(colorCounts).sort((a, b) => {
+                    const count = b[1] - a[1];
+                    return count == 0 ? a[0] - b[0] : count;
+                });
+
+                const lakehHeightsArray = Array.from(lakeHeights).sort((a, b) => {
+                    const count = b[1] - a[1];
+                    return count == 0 ? a[0] - b[0] : count;
+                });
+
+                let colorValue;
+                let heightValue;
+
+                if (oceanCount > reduceBy * reduceBy / 2) {
+                    console.log("setting ocean");
+                    colorValue = colorCountsArray[0][0];
+                    if (colorValue > 3) {
+                        console.error("Ocean color is not blue");
+                    }
+                    heightValue = heightCountsArray[0][0];
+                    if (heightValue > 0) {
+                        console.error("Ocean height is greater than 0");
+                    }
+                } else {
+                    if (oceanCount > 1) {
+                        console.log("setting land");
+                        colorValue = colorCountsArray[0][0];
+                        if (colorValue <= 3) {
+                            console.warn("Land color would be blue. Choosing next color");
+                            colorValue = colorCountsArray[1][0];
+                        }
+                        heightValue = heightCountsArray[0][0];
+                        if (heightValue == 0) {
+                            console.warn("Land height would be 0. Choosing next height");
+                            heightValue = heightCountsArray[1][0];
+                        }
+                    } else {
+                        colorValue = colorCountsArray[0][0];
+                        if (colorValue <= 3) {
+                            console.log("Found a lake");
+                            heightValue = lakehHeightsArray[0][0];
+                        } else {
+                            heightValue = heightCountsArray[0][0];
+                        }
+                    }
+                }
+
+                const destIdx = (y * binSize + x) * 4;
+                if (isColorMap) {
+                    binnedData[destIdx] = colors[colorValue].r;
+                    binnedData[destIdx + 1] = colors[colorValue].g;
+                    binnedData[destIdx + 2] = colors[colorValue].b;
+                    binnedData[destIdx + 3] = 255;
+                } else {
+                    binnedData[destIdx] = heightValue;
+                    binnedData[destIdx + 1] = heightValue;
+                    binnedData[destIdx + 2] = heightValue;
+                    binnedData[destIdx + 3] = 255;
+                }
+            }
+        }
+        return binnedData;
+    }
     
     // Helper function to create cube net for a specific view
     function createCubeNetCanvas(viewType) {
@@ -1685,6 +1839,60 @@ function downloadCubeNet() {
         return combinedCanvas;
     }
     
+    // Helper function to create smaller cube net with binning
+    function createSmallCubeNetCanvas(isBinnedColormap = false) {
+        const combinedCanvas = document.createElement('canvas');
+        const borderWidth = 1;
+        const faceSize = smallerSize;
+        const totalWidth = (faceSize + borderWidth) * 4 + borderWidth;
+        const totalHeight = (faceSize + borderWidth) * 3 + borderWidth;
+        
+        combinedCanvas.width = totalWidth;
+        combinedCanvas.height = totalHeight;
+        const ctx = combinedCanvas.getContext('2d');
+        
+        // Draw transparent grid lines
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0)';
+        ctx.lineWidth = borderWidth;
+        
+        // Define face positions in the cube net (4x3 grid)
+        const facePositions = {
+            'top': { x: 1, y: 0 },
+            'left': { x: 0, y: 1 },
+            'front': { x: 1, y: 1 },
+            'right': { x: 2, y: 1 },
+            'back': { x: 3, y: 1 },
+            'bottom': { x: 1, y: 2 }
+        };
+        
+        // Create temporary canvases for each face
+        Object.keys(facePositions).forEach(face => {
+            const data = currentData[face];
+            const faceData = data.layers;
+            
+            // Create smaller canvas for binned data
+            const smallCanvas = document.createElement('canvas');
+            smallCanvas.width = smallerSize;
+            smallCanvas.height = smallerSize;
+            const smallCtx = smallCanvas.getContext('2d');
+            const smallImageData = smallCtx.createImageData(smallerSize, smallerSize);
+            
+            const binnedData = binCubeNet(data.biomeData, data.heightData, size, faceData.isWater, faceData.water, isBinnedColormap);
+            
+            smallImageData.data.set(binnedData);
+            smallCtx.putImageData(smallImageData, 0, 0);
+            
+            // Draw to combined canvas
+            const pos = facePositions[face];
+            const x = pos.x * (faceSize + borderWidth) + borderWidth;
+            const y = pos.y * (faceSize + borderWidth) + borderWidth;
+            
+            ctx.drawImage(smallCanvas, x, y, faceSize, faceSize);
+        });
+        
+        return combinedCanvas;
+    }
+    
     // Create and download both heightmap and biome versions
     try {
         // Create heightmap version
@@ -1703,7 +1911,27 @@ function downloadCubeNet() {
             biomeLink.download = `colormap_${sizeValue}_${seedValue}.png`;
             biomeLink.href = biomeCanvas.toDataURL();
             biomeLink.click();
-        }, 100); // Small delay to prevent browser blocking multiple downloads
+        }, 100);
+        
+        // Create small colormap version
+        setTimeout(() => {
+            const smallColormapCanvas = createSmallCubeNetCanvas(true);
+            const smallColormapLink = document.createElement('a');
+            smallColormapLink.style.display = 'none';
+            smallColormapLink.download = `colormap_small_${smallerSize}_${seedValue}.png`;
+            smallColormapLink.href = smallColormapCanvas.toDataURL();
+            smallColormapLink.click();
+        }, 200);
+        
+        // Create small heightmap version
+        setTimeout(() => {
+            const smallHeightmapCanvas = createSmallCubeNetCanvas(false);
+            const smallHeightmapLink = document.createElement('a');
+            smallHeightmapLink.style.display = 'none';
+            smallHeightmapLink.download = `heightmap_small_${smallerSize}_${seedValue}.png`;
+            smallHeightmapLink.href = smallHeightmapCanvas.toDataURL();
+            smallHeightmapLink.click();
+        }, 300);
         
     } catch (error) {
         console.error('Failed to download cube nets:', error);
