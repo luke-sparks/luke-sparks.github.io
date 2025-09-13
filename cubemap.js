@@ -711,7 +711,6 @@ function calculateDistanceFromLand(allFaceData, size) {
                 } else {
                     // Handle cross-face neighbors - only allow cardinal directions (no diagonals across edges)
                     let crossFaceAdjacentFace = null;
-                    let crossFaceAdjacentX = -1, crossFaceAdjacentY = -1;
                     let sourceEdgeIndex = -1, targetEdgeIndex = -1;
                     
                     // Only process cardinal directions (columnOffset=0 OR rowOffset=0, not both non-zero)
@@ -1040,48 +1039,40 @@ function adjustLakeHeights(allFaceData, size) {
                                     queue.push({face, x: nx, y: ny});
                                 }
                             } else {
-                                // Check cross-face connections
-                                let adjacentFace = null;
-                                let adjacentX = -1, adjacentY = -1;
-                                
-                                if (nx < 0 && adjacency[face].left) {
-                                    const [adjFace, adjEdge] = adjacency[face].left;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cy < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cy].x;
-                                        adjacentY = adjPixels[cy].y;
-                                    }
-                                } else if (nx >= size && adjacency[face].right) {
-                                    const [adjFace, adjEdge] = adjacency[face].right;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cy < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cy].x;
-                                        adjacentY = adjPixels[cy].y;
-                                    }
-                                } else if (ny < 0 && adjacency[face].top) {
-                                    const [adjFace, adjEdge] = adjacency[face].top;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cx < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cx].x;
-                                        adjacentY = adjPixels[cx].y;
-                                    }
-                                } else if (ny >= size && adjacency[face].bottom) {
-                                    const [adjFace, adjEdge] = adjacency[face].bottom;
-                                    const adjPixels = getEdgePixels(size, adjEdge);
-                                    if (cx < adjPixels.length) {
-                                        adjacentFace = adjFace;
-                                        adjacentX = adjPixels[cx].x;
-                                        adjacentY = adjPixels[cx].y;
-                                    }
+                                let crossFaceAdjacentFace = null;
+                                let sourceEdgeIndex = -1, targetEdgeIndex = -1;
+
+                                if (nx < 0) {
+                                    const [adjacentFaceName, adjacentFaceEdgeIndex] = adjacency[face].left;
+                                    crossFaceAdjacentFace = adjacentFaceName;
+                                    sourceEdgeIndex = 3;
+                                    targetEdgeIndex = adjacentFaceEdgeIndex;
+                                } else if (nx >= size) {
+                                    const [adjacentFaceName, adjacentFaceEdgeIndex] = adjacency[face].right;
+                                    crossFaceAdjacentFace = adjacentFaceName;
+                                    sourceEdgeIndex = 1;
+                                    targetEdgeIndex = adjacentFaceEdgeIndex;
+                                } else if (ny < 0) {
+                                    const [adjacentFaceName, adjacentFaceEdgeIndex] = adjacency[face].top;
+                                    crossFaceAdjacentFace = adjacentFaceName;
+                                    sourceEdgeIndex = 0;
+                                    targetEdgeIndex = adjacentFaceEdgeIndex;
+                                } else if (ny >= size) {
+                                    const [adjacentFaceName, adjacentFaceEdgeIndex] = adjacency[face].bottom;
+                                    crossFaceAdjacentFace = adjacentFaceName;
+                                    sourceEdgeIndex = 2;
+                                    targetEdgeIndex = adjacentFaceEdgeIndex;
+                                } else {
+                                    console.log("shouldn't ever get here");
+                                    continue;
                                 }
+
+                                let {x: crossFaceAdjacentX, y: crossFaceAdjacentY} = transformPixelForCrossFace(nx, ny, size, face, sourceEdgeIndex);
                                 
-                                if (adjacentFace && allFaceData[adjacentFace]) {
-                                    const adjIdx = adjacentY * size + adjacentX;
-                                    if (allFaceData[adjacentFace].isWater[adjIdx] && !globalVisited[adjacentFace][adjIdx]) {
-                                        queue.push({face: adjacentFace, x: adjacentX, y: adjacentY});
+                                if (crossFaceAdjacentFace && allFaceData[crossFaceAdjacentFace]) {
+                                    const adjIdx = crossFaceAdjacentY * size + crossFaceAdjacentX;
+                                    if (allFaceData[crossFaceAdjacentFace].isWater[adjIdx] && !globalVisited[crossFaceAdjacentFace][adjIdx]) {
+                                        queue.push({face: crossFaceAdjacentFace, x: crossFaceAdjacentX, y: crossFaceAdjacentY});
                                     }
                                 }
                             }
