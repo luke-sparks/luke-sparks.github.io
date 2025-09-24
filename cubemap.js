@@ -30,6 +30,30 @@ const colors = [
         {r: 245, g: 245, b: 255}  // Level 20: Snow peaks
     ];
 
+const colorString = `const colors = [
+        null,
+        {r: 5, g: 15, b: 60},     // Level 1: Deep ocean
+        {r: 15, g: 35, b: 90},    // Level 2: Medium ocean
+        {r: 30, g: 60, b: 130},   // Level 3: Shallow ocean
+        {r: 220, g: 200, b: 160}, // Level 4: Beach
+        {r: 150, g: 200, b: 110}, // Level 5: Lowlands
+        {r: 120, g: 180, b: 80},  // Level 6: Low plains
+        {r: 100, g: 160, b: 70},  // Level 7: Plain
+        {r: 90, g: 150, b: 65},   // Level 8: Rolling hills
+        {r: 110, g: 140, b: 75},  // Level 9: Lower hills
+        {r: 115, g: 130, b: 75},  // Level 10: Hills
+        {r: 125, g: 130, b: 80},  // Level 11: Higher hills
+        {r: 140, g: 120, b: 80},  // Level 12: Highlands
+        {r: 145, g: 125, b: 85},  // Level 13: High highlands
+        {r: 150, g: 130, b: 90},  // Level 14: Lower mountains
+        {r: 160, g: 140, b: 100}, // Level 15: Mountains
+        {r: 170, g: 150, b: 120}, // Level 16: High mountains
+        {r: 180, g: 170, b: 150}, // Level 17: Alpine
+        {r: 200, g: 200, b: 210}, // Level 18: High peaks
+        {r: 220, g: 220, b: 230}, // Level 19: Snow line
+        {r: 245, g: 245, b: 255}  // Level 20: Snow peaks
+    ];`
+
 // Height value remapping for land: Land levels 4-20 mapped to heights
 const landHeightMapping = {
     1: 0, 2: 0, 3: 0,   // Ocean depths
@@ -61,35 +85,11 @@ let workerBlobURL = null;
 function createWorkerBlobURL() {
     if (workerBlobURL) return workerBlobURL;
     
-    const workerCode = `
+    const workerCode = colorString + `
 // Face Worker - Handles terrain generation for individual cube faces
 // This worker runs in a separate thread for true parallelization
 
 const rotationAngle = 0.85;
-
-const colors = [
-        null,
-        {r: 5, g: 15, b: 60},     // Level 1: Deep ocean
-        {r: 15, g: 35, b: 90},    // Level 2: Medium ocean
-        {r: 30, g: 60, b: 130},   // Level 3: Shallow ocean
-        {r: 220, g: 200, b: 160}, // Level 4: Beach
-        {r: 150, g: 200, b: 110}, // Level 5: Lowlands
-        {r: 120, g: 180, b: 80},  // Level 6: Low plains
-        {r: 100, g: 160, b: 70},  // Level 7: Plain
-        {r: 90, g: 150, b: 65},   // Level 8: Rolling hills
-        {r: 110, g: 140, b: 75},  // Level 9: Lower hills
-        {r: 115, g: 130, b: 75},  // Level 10: Hills
-        {r: 125, g: 130, b: 80},  // Level 11: Higher hills
-        {r: 140, g: 120, b: 80},  // Level 12: Highlands
-        {r: 145, g: 125, b: 85},  // Level 13: High highlands
-        {r: 150, g: 130, b: 90},  // Level 14: Lower mountains
-        {r: 160, g: 140, b: 100}, // Level 15: Mountains
-        {r: 170, g: 150, b: 120}, // Level 16: High mountains
-        {r: 180, g: 170, b: 150}, // Level 17: Alpine
-        {r: 200, g: 200, b: 210}, // Level 18: High peaks
-        {r: 220, g: 220, b: 230}, // Level 19: Snow line
-        {r: 245, g: 245, b: 255}  // Level 20: Snow peaks
-    ];
 
 class Noise {
     constructor(seed) {
@@ -354,43 +354,6 @@ function generateFace(face, size, noise) {
                 // Quantize land height to discrete levels (4-20)
                 let quantizedHeight = Math.floor(((landHeight - 0.27) / 0.7) * 17) + 4;
                 quantizedHeight = Math.max(4, Math.min(20, quantizedHeight));
-                
-                // Minimize large sand areas - optimized coastal check
-                if (quantizedHeight === 4) {
-                    let nearWater = false;
-                    
-                    // Efficient spiral search pattern
-                    for (let r = 1; r <= checkRadius && !nearWater; r++) {
-                        for (let angle = 0; angle < 8 && !nearWater; angle++) {
-                            const dx = Math.round(r * Math.cos(angle * Math.PI / 4));
-                            const dy = Math.round(r * Math.sin(angle * Math.PI / 4));
-                            
-                            const checkX = Math.max(0, Math.min(size-1, x + dx));
-                            const checkY = Math.max(0, Math.min(size-1, y + dy));
-                            
-                            if (checkX !== x || checkY !== y) {
-                                const checkU = checkX / (size - 1);
-                                const checkV = checkY / (size - 1);
-                                const checkCoords = getCubeCoords(face, checkU, checkV);
-                                
-                                // Quick height estimation using fewer octaves
-                                const checkContinents = noise.fbm(checkCoords.x * continentScale, checkCoords.y * continentScale, checkCoords.z * continentScale, 2) * 0.7;
-                                const checkIslands = noise.fbm(checkCoords.x * islandScale + 100, checkCoords.y * islandScale + 100, checkCoords.z * islandScale + 100, 2) * 0.4;
-                                
-                                let checkHeight = checkContinents * 0.6 + checkIslands * 0.4;
-                                checkHeight = Math.max(0, Math.min(1, checkHeight));
-                                
-                                if (checkHeight <= 0.3) {
-                                    nearWater = true;
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (!nearWater) {
-                        quantizedHeight = 5;
-                    }
-                }
                 
                 waterData[idx] = 0;
                 landData[idx] = quantizedHeight;
