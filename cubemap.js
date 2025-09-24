@@ -192,7 +192,7 @@ function getCubeCoords(face, u, v) {
     return { x: x/len, y: y/len, z: z/len };
 }
 
-function getBiome(heightLevel, temperature, moisture) {
+function getBiome(heightLevel) {
     return colors[heightLevel] || {r: 0, g: 0, b: 0};
 }
 
@@ -409,10 +409,6 @@ function generateFace(face, size, noise) {
     
     // Generate biomes in final pass
     for (let i = 0; i < size * size; i++) {
-        const coord = coords[i];
-        const finalHeight = Math.round(heightData[i] * 10);
-        
-        // Use isWater array to determine biome type, not just height
         if (isWater[i]) {
             // Water biome - always use water colors (1-3) regardless of actual height
             const actualWaterHeight = Math.round(waterData[i]);
@@ -426,7 +422,7 @@ function generateFace(face, size, noise) {
                 waterColorLevel = 3;
             }
             
-            const biome = getBiome(waterColorLevel, 0, 1);
+            const biome = getBiome(waterColorLevel);
             
             const biomeIdx = i * 4;
             biomeData[biomeIdx] = biome.r;
@@ -434,23 +430,7 @@ function generateFace(face, size, noise) {
             biomeData[biomeIdx + 2] = biome.b;
             biomeData[biomeIdx + 3] = 255;
         } else {
-            // Land biome - generate climate for land
-            let latitude = Math.abs(coord.y);
-            let baseTemp = 1.0 - latitude * 0.8;
-            const elevationCooling = Math.max(0, (finalHeight/20) - 0.2) * 1.0;
-            
-            // Climate noise - 300 degree rotation
-            const climateRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 10);
-            const tempNoise = noise.fbm(climateRotated.x * climateScale + 900, climateRotated.y * climateScale + 900, climateRotated.z * climateScale + 900, 3) * 0.3;
-            const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling + tempNoise));
-            
-            // Precipitation noise - 330 degree rotation
-            const precipRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 11);
-            const precipitation = noise.fbm(precipRotated.x * precipScale + 1000, precipRotated.y * precipScale + 1000, precipRotated.z * precipScale + 1000, 3);
-            const oceanInfluence = Math.max(0, 0.5 - Math.max(0, (finalHeight/20) - 0.2) * 2);
-            const moisture = Math.max(0, Math.min(1, precipitation * 0.6 + oceanInfluence * 0.3));
-            
-            const biome = getBiome(finalHeight, temperature, moisture);
+            const biome = getBiome(Math.round(heightData[i] * 10));
             
             const biomeIdx = i * 4;
             biomeData[biomeIdx] = biome.r;
@@ -1182,7 +1162,7 @@ function adjustLakeHeights(allFaceData, size) {
     }
 }
 
-function getBiome(heightLevel, temperature, moisture) {
+function getBiome(heightLevel) {
     // Return the exact color for this height level
     return colors[heightLevel] || {r: 0, g: 0, b: 0};
 }
@@ -1532,7 +1512,7 @@ async function generate() {
                         waterColorLevel = 3;
                     }
                     
-                    const biome = getBiome(waterColorLevel, 0, 1);
+                    const biome = getBiome(waterColorLevel);
                     
                     const biomeIdx = j * 4;
                     biomeData[biomeIdx] = biome.r;
@@ -1560,18 +1540,7 @@ async function generate() {
                         case 'bottom': cx = s; cy = -1; cz = -t; break;
                     }
                     
-                    const len = Math.sqrt(cx*cx + cy*cy + cz*cz);
-                    const coord = { x: cx/len, y: cy/len, z: cz/len };
-                    const finalHeight = Math.round(faceData.landData[j]);
-                    
-                    // Generate climate for land biome (simplified version)
-                    let latitude = Math.abs(coord.y);
-                    let baseTemp = 1.0 - latitude * 0.8;
-                    const elevationCooling = Math.max(0, (finalHeight/20) - 0.2) * 1.0;
-                    const temperature = Math.max(0, Math.min(1, baseTemp - elevationCooling));
-                    const moisture = Math.max(0, Math.min(1, 0.5));
-                    
-                    const biome = getBiome(finalHeight, temperature, moisture);
+                    const biome = getBiome(Math.round(faceData.landData[j]));
                     
                     const biomeIdx = j * 4;
                     biomeData[biomeIdx] = biome.r;
