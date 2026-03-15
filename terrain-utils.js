@@ -86,6 +86,26 @@ function generateFace(face, size, noise, colors) {
     const tectonicsLayer = new Float32Array(size * size);
     const lakesLayer = new Float32Array(size * size);
 
+    // Pre-compute all rotation cos/sin values outside the loop
+    const cos1 = Math.cos(rotationAngle);
+    const sin1 = Math.sin(rotationAngle);
+    const cos2 = Math.cos(rotationAngle * 2);
+    const sin2 = Math.sin(rotationAngle * 2);
+    const cos3 = Math.cos(rotationAngle * 3);
+    const sin3 = Math.sin(rotationAngle * 3);
+    const cos4 = Math.cos(rotationAngle * 4);
+    const sin4 = Math.sin(rotationAngle * 4);
+    const cos5 = Math.cos(rotationAngle * 5);
+    const sin5 = Math.sin(rotationAngle * 5);
+    const cos6 = Math.cos(rotationAngle * 6);
+    const sin6 = Math.sin(rotationAngle * 6);
+    const cos7 = Math.cos(rotationAngle * 7);
+    const sin7 = Math.sin(rotationAngle * 7);
+    const cos8 = Math.cos(rotationAngle * 8);
+    const sin8 = Math.sin(rotationAngle * 8);
+    const cos9 = Math.cos(rotationAngle * 9);
+    const sin9 = Math.sin(rotationAngle * 9);
+
     // Pre-calculate coordinates and noise in single pass
     const coords = new Array(size * size);
     const checkRadius = Math.floor(size);
@@ -98,45 +118,54 @@ function generateFace(face, size, noise, colors) {
 
             // Get 3D coordinates ensuring perfect edge continuity
             coords[idx] = getCubeCoords(face, u, v);
-            const coord = coords[idx];
+            const cx = coords[idx].x;
+            const cy = coords[idx].y;
+            const cz = coords[idx].z;
 
             // Continents layer - no rotation (base layer)
-            const continents = noise.fbm(coord.x * continentScale, coord.y * continentScale, coord.z * continentScale, 3) * 0.7;
+            const continents = noise.fbm(cx * continentScale, cy * continentScale, cz * continentScale, 3) * 0.7;
             continentsLayer[idx] = Math.max(0, Math.min(1, continents + 0.5));
 
-            // Islands layer - 30 degree rotation
-            const islandsRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle);
-            const islands = noise.fbm(islandsRotated.x * islandScale + 100, islandsRotated.y * islandScale + 100, islandsRotated.z * islandScale + 100, 4) * 0.4;
+            // Islands layer - inline rotation 1
+            const irx = cx * cos1 - cy * sin1;
+            const iry = cx * sin1 + cy * cos1;
+            const islands = noise.fbm(irx * islandScale + 100, iry * islandScale + 100, cz * islandScale + 100, 4) * 0.4;
             islandsLayer[idx] = Math.max(0, Math.min(1, islands + 0.5));
 
-            // Mountains layer - 60 degree rotation
-            const mountainsRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 2);
-            const mountains = noise.fbm(mountainsRotated.x * mountainScale + 200, mountainsRotated.y * mountainScale + 200, mountainsRotated.z * mountainScale + 200, 3) * 0.5;
+            // Mountains layer - inline rotation 2
+            const mrx = cx * cos2 - cy * sin2;
+            const mry = cx * sin2 + cy * cos2;
+            const mountains = noise.fbm(mrx * mountainScale + 200, mry * mountainScale + 200, cz * mountainScale + 200, 3) * 0.5;
             mountainsLayer[idx] = Math.max(0, Math.min(1, mountains + 0.5));
 
-            // Rivers layer - 90 degree rotation
-            const riversRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 3);
-            const rivers = noise.fbm(riversRotated.x * riverScale + 300, riversRotated.y * riverScale + 300, riversRotated.z * riverScale + 300, 2);
+            // Rivers layer - inline rotation 3
+            const rrx = cx * cos3 - cy * sin3;
+            const rry = cx * sin3 + cy * cos3;
+            const rivers = noise.fbm(rrx * riverScale + 300, rry * riverScale + 300, cz * riverScale + 300, 2);
             riversLayer[idx] = Math.max(0, Math.min(1, Math.abs(rivers)));
 
-            // Hills layer - 120 degree rotation
-            const hillsRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 4);
-            const hills = noise.fbm(hillsRotated.x * hillScale + 400, hillsRotated.y * hillScale + 400, hillsRotated.z * hillScale + 400, 4) * 0.2;
+            // Hills layer - inline rotation 4
+            const hrx = cx * cos4 - cy * sin4;
+            const hry = cx * sin4 + cy * cos4;
+            const hills = noise.fbm(hrx * hillScale + 400, hry * hillScale + 400, cz * hillScale + 400, 4) * 0.2;
             hillsLayer[idx] = Math.max(0, Math.min(1, hills + 0.5));
 
-            // Details layer - 150 degree rotation
-            const detailsRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 5);
-            const details = noise.fbm(detailsRotated.x * detailScale + 500, detailsRotated.y * detailScale + 500, detailsRotated.z * detailScale + 500, 3) * 0.1;
+            // Details layer - inline rotation 5
+            const drx = cx * cos5 - cy * sin5;
+            const dry = cx * sin5 + cy * cos5;
+            const details = noise.fbm(drx * detailScale + 500, dry * detailScale + 500, cz * detailScale + 500, 3) * 0.1;
             detailsLayer[idx] = Math.max(0, Math.min(1, details + 0.5));
 
-            // Tectonics layer - 180 degree rotation
-            const tectonicsRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 6);
-            const tectonics = noise.fbm(tectonicsRotated.x * tectonicScale + 700, tectonicsRotated.y * tectonicScale + 700, tectonicsRotated.z * tectonicScale + 700, 2);
+            // Tectonics layer - inline rotation 6
+            const trx = cx * cos6 - cy * sin6;
+            const try_ = cx * sin6 + cy * cos6;
+            const tectonics = noise.fbm(trx * tectonicScale + 700, try_ * tectonicScale + 700, cz * tectonicScale + 700, 2);
             tectonicsLayer[idx] = Math.max(0, Math.min(1, tectonics + 0.5));
 
-            // Lakes layer - 210 degree rotation
-            const lakesRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 7);
-            const lakes = noise.fbm(lakesRotated.x * lakeScale + 600, lakesRotated.y * lakeScale + 600, lakesRotated.z * lakeScale + 600, 3);
+            // Lakes layer - inline rotation 7
+            const lrx = cx * cos7 - cy * sin7;
+            const lry = cx * sin7 + cy * cos7;
+            const lakes = noise.fbm(lrx * lakeScale + 600, lry * lakeScale + 600, cz * lakeScale + 600, 3);
             lakesLayer[idx] = Math.max(0, Math.min(1, lakes + 0.5));
 
             // Generate land height first
@@ -153,17 +182,19 @@ function generateFace(face, size, noise, colors) {
                 landHeight += superPeaks;
             }
 
-            // Mountain ridge enhancement - 240 degree rotation
-            const ridgesRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 8);
-            const ridges = noise.fbm(ridgesRotated.x * ridgeScale + 1100, ridgesRotated.y * ridgeScale + 1100, ridgesRotated.z * ridgeScale + 1100, 2);
+            // Mountain ridge enhancement - inline rotation 8
+            const ridgerx = cx * cos8 - cy * sin8;
+            const ridgery = cx * sin8 + cy * cos8;
+            const ridges = noise.fbm(ridgerx * ridgeScale + 1100, ridgery * ridgeScale + 1100, cz * ridgeScale + 1100, 2);
             if (ridges > 0.6 && landHeight > 0.5) {
                 landHeight += (ridges - 0.6) * 1.2;
             }
 
-            // Coastal erosion and beaches - 270 degree rotation
+            // Coastal erosion and beaches - inline rotation 9
             if (size >= 20) {
-                const coastalRotated = rotateCoordinates(coord.x, coord.y, coord.z, rotationAngle * 9);
-                const coastal = noise.fbm(coastalRotated.x * coastalScale + 800, coastalRotated.y * coastalScale + 800, coastalRotated.z * coastalScale + 800, 2) * 0.05;
+                const coastrx = cx * cos9 - cy * sin9;
+                const coastry = cx * sin9 + cy * cos9;
+                const coastal = noise.fbm(coastrx * coastalScale + 800, coastry * coastalScale + 800, cz * coastalScale + 800, 2) * 0.05;
                 if (landHeight > 0.15 && landHeight < 0.4) {
                     landHeight += coastal;
                 }

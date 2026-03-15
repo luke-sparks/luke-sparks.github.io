@@ -107,7 +107,7 @@ function generateFaceWithWorker(face, size, seed) {
 
 // Cross-face BFS distance calculation - runs in main thread for coordination
 function calculateDistanceFromLand(allFaceData, size) {
-    const faceAdjacency = getCubeFaceAdjacency();
+    const faceAdjacency = FACE_ADJACENCY;
     const shallowWaterMaxDistance = 15;
     const maximumSearchRadius = Math.min(shallowWaterMaxDistance + 5, size / 4);
     
@@ -286,52 +286,46 @@ async function enhanceOceanDepths(allFaceData, size) {
     });
 }
 
-function getCubeFaceAdjacency() {
-    // Define how cube faces connect to each other
-    // Each edge is defined as [face, edge] where edge is 0=top, 1=right, 2=bottom, 3=left
-    const topEdge = 0;
-    const rightEdge = 1;
-    const bottomEdge = 2;
-    const leftEdge = 3
-    return {
-        'front': {
-            top: ['top', bottomEdge],      // Front top -> Top bottom
-            right: ['right', leftEdge],  // Front right -> Right left  
-            bottom: ['bottom', topEdge], // Front bottom -> Bottom top
-            left: ['left', rightEdge]     // Front left -> Left right
-        },
-        'back': {
-            top: ['top', topEdge],      // Back top -> Top top
-            right: ['left', leftEdge],   // Back right -> Left left
-            bottom: ['bottom', bottomEdge], // Back bottom -> Bottom bottom  
-            left: ['right', rightEdge]    // Back left -> Right right
-        },
-        'right': {
-            top: ['top', rightEdge],      // Right top -> Top right
-            right: ['back', leftEdge],   // Right right -> Back left
-            bottom: ['bottom', rightEdge], // Right bottom -> Bottom right
-            left: ['front', rightEdge]    // Right left -> Front right
-        },
-        'left': {
-            top: ['top', leftEdge],      // Left top -> Top left
-            right: ['front', leftEdge],  // Left right -> Front left
-            bottom: ['bottom', leftEdge], // Left bottom -> Bottom left
-            left: ['back', rightEdge]     // Left left -> Back right
-        },
-        'top': {
-            top: ['back', topEdge],     // Top top -> Back top
-            right: ['right', topEdge],  // Top right -> Right top
-            bottom: ['front', topEdge], // Top bottom -> Front top
-            left: ['left', topEdge]     // Top left -> Left top
-        },
-        'bottom': {
-            top: ['front', bottomEdge],    // Bottom top -> Front bottom
-            right: ['right', bottomEdge],  // Bottom right -> Right bottom
-            bottom: ['back', bottomEdge],  // Bottom bottom -> Back bottom
-            left: ['left', bottomEdge]     // Bottom left -> Left bottom
-        }
-    };
-}
+// Cube face adjacency - computed once since topology never changes
+// Each edge is defined as [face, edge] where edge is 0=top, 1=right, 2=bottom, 3=left
+const FACE_ADJACENCY = {
+    'front': {
+        top: ['top', 2],      // Front top -> Top bottom
+        right: ['right', 3],  // Front right -> Right left
+        bottom: ['bottom', 0], // Front bottom -> Bottom top
+        left: ['left', 1]     // Front left -> Left right
+    },
+    'back': {
+        top: ['top', 0],      // Back top -> Top top
+        right: ['left', 3],   // Back right -> Left left
+        bottom: ['bottom', 2], // Back bottom -> Bottom bottom
+        left: ['right', 1]    // Back left -> Right right
+    },
+    'right': {
+        top: ['top', 1],      // Right top -> Top right
+        right: ['back', 3],   // Right right -> Back left
+        bottom: ['bottom', 1], // Right bottom -> Bottom right
+        left: ['front', 1]    // Right left -> Front right
+    },
+    'left': {
+        top: ['top', 3],      // Left top -> Top left
+        right: ['front', 3],  // Left right -> Front left
+        bottom: ['bottom', 3], // Left bottom -> Bottom left
+        left: ['back', 1]     // Left left -> Back right
+    },
+    'top': {
+        top: ['back', 0],     // Top top -> Back top
+        right: ['right', 0],  // Top right -> Right top
+        bottom: ['front', 0], // Top bottom -> Front top
+        left: ['left', 0]     // Top left -> Left top
+    },
+    'bottom': {
+        top: ['front', 2],    // Bottom top -> Front bottom
+        right: ['right', 2],  // Bottom right -> Right bottom
+        bottom: ['back', 2],  // Bottom bottom -> Back bottom
+        left: ['left', 2]     // Bottom left -> Left bottom
+    }
+};
 
 function transformPixelForCrossFace(sourcePixelX, sourcePixelY, size, sourceFaceName, sourceEdgeIndex) {
     // Transform pixel location when crossing edges
@@ -445,7 +439,7 @@ function adjustLakeHeights(allFaceData, size) {
     console.log('Finding connected water bodies across faces...');
     
     // Step 1: Find all connected water bodies using cross-face flood fill in main thread
-    const adjacency = getCubeFaceAdjacency();
+    const adjacency = FACE_ADJACENCY;
     const maxLakeSize = Math.max(20, size * size * 0.1);
     const minLakeSize = 5;
     const globalVisited = {};
@@ -467,10 +461,11 @@ function adjustLakeHeights(allFaceData, size) {
                 if (isWater[idx] && !globalVisited[startFace][idx]) {
                     const waterBody = [];
                     const queue = [{face: startFace, x, y}];
-                    
+                    let queuePos = 0;
+
                     // Cross-face flood fill
-                    while (queue.length > 0) {
-                        const {face, x: cx, y: cy} = queue.shift();
+                    while (queuePos < queue.length) {
+                        const {face, x: cx, y: cy} = queue[queuePos++];
                         const cidx = cy * size + cx;
                         
                         if (globalVisited[face][cidx]) continue;
@@ -984,11 +979,7 @@ async function generate() {
             
             // Regenerate biome data with enhanced ocean depths and correct lake classifications
             const biomeData = new Uint8ClampedArray(size * size * 4);
-            
-            // Calculate feature scales for biome generation
-            const climateScale = size / 100;
-            const precipScale = size / 80;
-            
+
             for (let j = 0; j < size * size; j++) {
                 if (faceData.isWater[j]) {
                     const actualWaterHeight = Math.round(faceData.waterData[j]);
@@ -1008,26 +999,6 @@ async function generate() {
                     biomeData[biomeIdx + 2] = biome.b;
                     biomeData[biomeIdx + 3] = 255;
                 } else {
-                    // For land pixels (including converted small water bodies), regenerate biome
-                    const y = Math.floor(j / size);
-                    const x = j % size;
-                    const u = x / (size - 1);
-                    const v = y / (size - 1);
-                    
-                    // We need getCubeCoords but it's in the worker - let's recreate it here for biome generation
-                    const s = u * 2 - 1;
-                    const t = v * 2 - 1;
-                    let cx, cy, cz;
-                    
-                    switch(face) {
-                        case 'front': cx = s; cy = -t; cz = 1; break;
-                        case 'back': cx = -s; cy = -t; cz = -1; break;
-                        case 'right': cx = 1; cy = -t; cz = -s; break;
-                        case 'left': cx = -1; cy = -t; cz = s; break;
-                        case 'top': cx = s; cy = 1; cz = t; break;
-                        case 'bottom': cx = s; cy = -1; cz = -t; break;
-                    }
-                    
                     const biome = getBiome(Math.round(faceData.landData[j]));
                     
                     const biomeIdx = j * 4;
@@ -1065,6 +1036,12 @@ function downloadCubeNet() {
     const sizeValue = document.getElementById('size').value || '128';
     const reduceBy = 4;
     const smallerSize = Math.floor(size / reduceBy);
+
+    // Pre-build color lookup map for O(1) color-to-index matching
+    const colorToIndex = new Map();
+    colors.forEach((c, i) => {
+        if (c) colorToIndex.set(`${c.r},${c.g},${c.b}`, i);
+    });
 
     function binCubeNet(biomeData, heightData, originalSize, isWater, waterData, isColorMap) {
         const binSize = Math.floor(originalSize / reduceBy);
@@ -1120,13 +1097,7 @@ function downloadCubeNet() {
                             lakeHeights.set(mappedLevel, (lakeHeights.get(mappedLevel) || 0) + 1);
                         }
 
-                        const colorIndex = colors.findIndex((c) => {
-                            if (c) {
-                                return c.r == color.r && c.g == color.g && c.b == color.b;
-                            } else {
-                                return false;
-                            }
-                        });
+                        const colorIndex = colorToIndex.get(`${color.r},${color.g},${color.b}`) ?? -1;
 
                         heightCounts.set(mappedLevel, (heightCounts.get(mappedLevel) || 0) + 1);
                         colorCounts.set(colorIndex, (colorCounts.get(colorIndex) || 0) + 1)
@@ -1152,32 +1123,21 @@ function downloadCubeNet() {
                 let heightValue;
 
                 if (oceanCount > reduceBy * reduceBy / 2) {
-                    console.log("setting ocean");
                     colorValue = colorCountsArray[0][0];
-                    if (colorValue > 3) {
-                        console.error("Ocean color is not blue");
-                    }
                     heightValue = heightCountsArray[0][0];
-                    if (heightValue > 0) {
-                        console.error("Ocean height is greater than 0");
-                    }
                 } else {
                     if (oceanCount > 1) {
-                        console.log("setting land");
                         colorValue = colorCountsArray[0][0];
                         if (colorValue <= 3) {
-                            console.warn("Land color would be blue. Choosing next color");
                             colorValue = colorCountsArray[1][0];
                         }
                         heightValue = heightCountsArray[0][0];
                         if (heightValue == 0) {
-                            console.warn("Land height would be 0. Choosing next height");
                             heightValue = heightCountsArray[1][0];
                         }
                     } else {
                         colorValue = colorCountsArray[0][0];
                         if (colorValue <= 3) {
-                            console.log("Found a lake");
                             heightValue = lakehHeightsArray[0][0];
                         } else {
                             heightValue = heightCountsArray[0][0];
