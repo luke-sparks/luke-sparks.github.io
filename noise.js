@@ -1,6 +1,7 @@
 class Noise {
     constructor(seed) {
         this.seed = this.hashSeed(seed || Math.random().toString());
+        this._seedHash = this.seed * 999999999; // Pre-compute for hash()
     }
 
     hashSeed(s) {
@@ -16,7 +17,7 @@ class Noise {
 
     hash(x, y, z) {
         // Strong hash function that amplifies seed differences
-        let h = this.seed * 999999999 + x * 374761393 + y * 668265263 + z * 1274126177;
+        let h = this._seedHash + x * 374761393 + y * 668265263 + z * 1274126177;
         h = (h ^ (h >>> 13)) * 1274126177;
         h = (h ^ (h >>> 16)) * 1974126343;
         h = (h ^ (h >>> 7)) * 1374761393;
