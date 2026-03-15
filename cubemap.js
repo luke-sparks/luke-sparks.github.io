@@ -54,11 +54,38 @@ const landHeightMapping = {
 
 // Worker pool for parallel face generation
 let workerPool = [];
+let workerBlobURL = null;
 let taskCounter = 0;
-// Initialize worker pool
+// Initialize worker pool using Blob URLs so it works on file:// protocol.
+// noise.js and terrain-utils.js are loaded as <script> tags in the HTML,
+// making Noise, getCubeCoords, generateFace, etc. available as globals.
+// We serialize them into the Blob source for the worker.
 function initializeWorkers() {
+    const workerSource = `
+${Noise.toString()}
+const rotationAngle = ${rotationAngle};
+${getCubeCoords.toString()}
+function getBiome(heightLevel, colors) { return colors[heightLevel] || {r: 0, g: 0, b: 0}; }
+${generateFace.toString()}
+
+const colors = ${JSON.stringify(colors)};
+
+self.addEventListener('message', function(e) {
+    const { face, size, seed, taskId } = e.data;
+    try {
+        const noise = new Noise(seed);
+        const result = generateFace(face, size, noise, colors);
+        self.postMessage({ taskId, face, success: true, ...result });
+    } catch (error) {
+        self.postMessage({ taskId, face, success: false, error: error.message });
+    }
+});
+`;
+
+    workerBlobURL = URL.createObjectURL(new Blob([workerSource], { type: 'application/javascript' }));
+
     for (let i = 0; i < 6; i++) {
-        const worker = new Worker('terrain-worker.js');
+        const worker = new Worker(workerBlobURL);
         workerPool.push(worker);
     }
 }
@@ -67,6 +94,10 @@ function initializeWorkers() {
 function terminateWorkers() {
     workerPool.forEach(worker => worker.terminate());
     workerPool = [];
+    if (workerBlobURL) {
+        URL.revokeObjectURL(workerBlobURL);
+        workerBlobURL = null;
+    }
 }
 
 // Generate face using web worker
